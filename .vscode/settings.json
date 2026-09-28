@@ -5,7 +5,7 @@
                           "**/*.pyo":  true,
                           "**/*.pyd":  true,
                           "**/*.ini":  true,
-                          "**/*.gitignore":  true,
+                          "**/*.gitignore":  false,
                           "**/*.project_root":  true,
                           "**/*.log":  true,
                           "**/*.spec":  true,

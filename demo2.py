@@ -107,7 +107,7 @@ class BoundaryCondition:
         return torch.max(torch.abs(Az)).item()
 
 class MagneticPINN(nn.Module):
-    def __init__(self, hidden_layers=4, neurons=64, hard_boundary=True):
+    def __init__(self, hidden_layers=6, neurons=128, hard_boundary=True):
         super().__init__()
         self.hard_boundary = hard_boundary
         
@@ -211,12 +211,12 @@ def evaluate_fields(model, resolution=160, device=DEVICE):
     
     return {"X": X, "Y": Y, "Az": Az, "Bx": Bx, "By": By, "Bmag": Bmag, "Mx": Mx, "dMx_dy": dMx_dy}
 
-def train_pinn(epochs=4000, num_collocation=5000, hidden_layers=4, neurons=64, learning_rate=2.0e-3, print_every=500):
+def train_pinn(epochs=6000, num_collocation=10000, hidden_layers=6, neurons=128, learning_rate=1.0e-3, print_every=500, lbfgs_steps=800):
     model = MagneticPINN(hidden_layers=hidden_layers, neurons=neurons, hard_boundary=True).to(DEVICE)
     source = MagnetizationSource()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.5)
-    bc = BoundaryCondition(num_points=250)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1.0e-6)
+    bc = BoundaryCondition(num_points=500)
     engine = torch.quasirandom.SobolEngine(dimension=2, scramble=True)
     
     history = {"pde": [], "boundary": []}
@@ -242,16 +242,48 @@ def train_pinn(epochs=4000, num_collocation=5000, hidden_layers=4, neurons=64, l
         
         if epoch == 1 or epoch % print_every == 0:
             lr = optimizer.param_groups[0]["lr"]
-            print(f"Epoch {epoch:04d} | PDE = {loss_pde.item():.6e} | BC = {loss_bc.item():.6e} | LR = {lr:.3e}")
+            print(f"Adam Epoch {epoch:04d} | PDE = {loss_pde.item():.6e} | BC = {loss_bc.item():.6e} | LR = {lr:.3e}")
+
+    lbfgs_optimizer = optim.LBFGS(
+        model.parameters(),
+        lr=0.8,
+        max_iter=20,
+        max_eval=25,
+        history_size=50,
+        tolerance_grad=1e-11,
+        tolerance_change=1e-13,
+        line_search_fn="strong_wolfe"
+    )
+
+    xy_collocation_fixed = sample_collocation_points(num_collocation, device=DEVICE, engine=engine)
+    xy_boundary_fixed = bc.sample_points(device=DEVICE)
+
+    step_count = [0]
+
+    def closure():
+        lbfgs_optimizer.zero_grad()
+        loss_pde_val, _ = compute_pde_loss(model, xy_collocation_fixed, source)
+        loss_bc_val = bc.loss(model, xy_boundary_fixed)
+        total_loss = loss_pde_val
+        total_loss.backward()
+        step_count[0] += 1
+        history["pde"].append(loss_pde_val.item())
+        history["boundary"].append(loss_bc_val.item())
+        if step_count[0] % 50 == 0:
+            print(f"L-BFGS Step {step_count[0]:04d} | PDE = {loss_pde_val.item():.6e} | BC = {loss_bc_val.item():.6e}")
+        return total_loss
+
+    for _ in range(lbfgs_steps // 20):
+        lbfgs_optimizer.step(closure)
             
     return model, history
 
 def report_diagnostics(model, source):
-    bc = BoundaryCondition(num_points=500)
+    bc = BoundaryCondition(num_points=1000)
     boundary_points = bc.sample_points(device=DEVICE)
     max_boundary_error = bc.max_error(model, boundary_points)
     
-    collocation = sample_collocation_points(5000, device=DEVICE)
+    collocation = sample_collocation_points(10000, device=DEVICE)
     loss_pde, residual = compute_pde_loss(model, collocation, source)
     residual_rms = torch.sqrt(torch.mean(residual**2)).item()
     
@@ -311,7 +343,7 @@ def plot_results(model, history):
     plt.show()
 
 if __name__ == "__main__":
-    trained_model, history = train_pinn(epochs=4000)
+    trained_model, history = train_pinn(epochs=6000, num_collocation=10000, hidden_layers=6, neurons=128, learning_rate=1.0e-3, lbfgs_steps=800)
     source = MagnetizationSource()
     report_diagnostics(trained_model, source)
     plot_results(trained_model, history)
