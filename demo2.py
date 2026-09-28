@@ -19,6 +19,7 @@ else:
     print("[DEBUG] Hardware using for training: CPU")
 
 MU0 = 4.0 * math.pi * 1.0e-7
+MUR_IRON = 1000.0
 L0 = 1.0
 M0 = 1.0e6
 A0 = MU0 * M0 * L0
@@ -29,6 +30,11 @@ WIDTH_Y = 0.12
 STEEPNESS = 60.0
 
 MAGNET_OFFSET_X = 1.5 * LENGTH_X
+
+SPAN_X = MAGNET_OFFSET_X + LENGTH_X
+YOKE_LENGTH_X = 1.10 * SPAN_X
+YOKE_WIDTH_Y = WIDTH_Y
+YOKE_OFFSET_Y = -(2.0 * WIDTH_Y)
 
 class MagnetizationSource:
     def __init__(self, length_x=LENGTH_X, width_y=WIDTH_Y, offset_x=MAGNET_OFFSET_X, steepness=STEEPNESS):
@@ -66,6 +72,24 @@ class MagnetizationSource:
 
     def dmx_dy_physical(self, xy):
         return (M0 / L0) * self.dmx_dy_dimensionless(xy)
+
+class MaterialPermeability:
+    def __init__(self, yoke_lx=YOKE_LENGTH_X, yoke_wy=YOKE_WIDTH_Y, yoke_offset_y=YOKE_OFFSET_Y, mur=MUR_IRON, steepness=STEEPNESS):
+        self.lx = float(yoke_lx)
+        self.wy = float(yoke_wy)
+        self.y0 = float(yoke_offset_y)
+        self.mur = float(mur)
+        self.k = float(steepness)
+        self.nu_air = 1.0
+        self.nu_iron = 1.0 / self.mur
+
+    def nu_r_dimensionless(self, xy):
+        x = xy[:, 0:1]
+        y = xy[:, 1:2]
+        sig_x = torch.sigmoid(self.k * (x + self.lx)) - torch.sigmoid(self.k * (x - self.lx))
+        sig_y = torch.sigmoid(self.k * (y - self.y0 + self.wy)) - torch.sigmoid(self.k * (y - self.y0 - self.wy))
+        mask_iron = sig_x * sig_y
+        return self.nu_air + (self.nu_iron - self.nu_air) * mask_iron
 
 class BoundaryCondition:
     def __init__(self, x_min=-1.0, x_max=1.0, y_min=-1.0, y_max=1.0, num_points=250):
@@ -144,7 +168,7 @@ def sample_collocation_points(num_points, x_min=-1.0, x_max=1.0, y_min=-1.0, y_m
     xy.requires_grad_(True)
     return xy
 
-def compute_pde_loss(model, xy_collocation, source):
+def compute_pde_loss(model, xy_collocation, source, material):
     Az_star = model(xy_collocation)
     
     grads = torch.autograd.grad(
@@ -155,21 +179,24 @@ def compute_pde_loss(model, xy_collocation, source):
     dAz_dx_star = grads[:, 0:1]
     dAz_dy_star = grads[:, 1:2]
     
-    second_x = torch.autograd.grad(
-        outputs=dAz_dx_star, inputs=xy_collocation,
-        grad_outputs=torch.ones_like(dAz_dx_star), create_graph=True, retain_graph=True
-    )[0]
-    d2Az_dx2_star = second_x[:, 0:1]
+    nu_r = material.nu_r_dimensionless(xy_collocation)
     
-    second_y = torch.autograd.grad(
-        outputs=dAz_dy_star, inputs=xy_collocation,
-        grad_outputs=torch.ones_like(dAz_dy_star), create_graph=True
-    )[0]
-    d2Az_dy2_star = second_y[:, 1:2]
+    flux_x = nu_r * dAz_dx_star
+    flux_y = nu_r * dAz_dy_star
+    
+    div_flux_x = torch.autograd.grad(
+        outputs=flux_x, inputs=xy_collocation,
+        grad_outputs=torch.ones_like(flux_x), create_graph=True, retain_graph=True
+    )[0][:, 0:1]
+    
+    div_flux_y = torch.autograd.grad(
+        outputs=flux_y, inputs=xy_collocation,
+        grad_outputs=torch.ones_like(flux_y), create_graph=True
+    )[0][:, 1:2]
     
     dmx_dy_star = source.dmx_dy_dimensionless(xy_collocation)
     
-    residual = d2Az_dx2_star + d2Az_dy2_star - dmx_dy_star
+    residual = div_flux_x + div_flux_y - dmx_dy_star
     loss_pde = torch.mean(residual**2)
     return loss_pde, residual
 
@@ -199,21 +226,24 @@ def evaluate_fields(model, resolution=160, device=DEVICE):
     Bmag = np.sqrt(Bx**2 + By**2)
     
     source = MagnetizationSource()
+    material = MaterialPermeability()
     xy_detached = xy.detach()
     
     with torch.no_grad():
         Mx = source.physical(xy_detached).cpu().numpy().reshape(X_star.shape)
         dMx_dy = source.dmx_dy_physical(xy_detached).cpu().numpy().reshape(X_star.shape)
+        Nu_r = material.nu_r_dimensionless(xy_detached).cpu().numpy().reshape(X_star.shape)
         
     X = L0 * X_star
     Y = L0 * Y_star
     model.train()
     
-    return {"X": X, "Y": Y, "Az": Az, "Bx": Bx, "By": By, "Bmag": Bmag, "Mx": Mx, "dMx_dy": dMx_dy}
+    return {"X": X, "Y": Y, "Az": Az, "Bx": Bx, "By": By, "Bmag": Bmag, "Mx": Mx, "dMx_dy": dMx_dy, "Nu_r": Nu_r}
 
-def train_pinn(epochs=6000, num_collocation=10000, hidden_layers=6, neurons=128, learning_rate=1.0e-3, print_every=500, lbfgs_steps=800):
+def train_pinn(epochs=6000, num_collocation=12000, hidden_layers=6, neurons=128, learning_rate=1.0e-3, print_every=500, lbfgs_steps=800):
     model = MagneticPINN(hidden_layers=hidden_layers, neurons=neurons, hard_boundary=True).to(DEVICE)
     source = MagnetizationSource()
+    material = MaterialPermeability()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1.0e-6)
     bc = BoundaryCondition(num_points=500)
@@ -225,7 +255,7 @@ def train_pinn(epochs=6000, num_collocation=10000, hidden_layers=6, neurons=128,
         optimizer.zero_grad(set_to_none=True)
         xy_collocation = sample_collocation_points(num_collocation, device=DEVICE, engine=engine)
         
-        loss_pde, _ = compute_pde_loss(model, xy_collocation, source)
+        loss_pde, _ = compute_pde_loss(model, xy_collocation, source, material)
         
         xy_boundary = bc.sample_points(device=DEVICE)
         loss_bc = bc.loss(model, xy_boundary)
@@ -262,7 +292,7 @@ def train_pinn(epochs=6000, num_collocation=10000, hidden_layers=6, neurons=128,
 
     def closure():
         lbfgs_optimizer.zero_grad()
-        loss_pde_val, _ = compute_pde_loss(model, xy_collocation_fixed, source)
+        loss_pde_val, _ = compute_pde_loss(model, xy_collocation_fixed, source, material)
         loss_bc_val = bc.loss(model, xy_boundary_fixed)
         total_loss = loss_pde_val
         total_loss.backward()
@@ -278,13 +308,13 @@ def train_pinn(epochs=6000, num_collocation=10000, hidden_layers=6, neurons=128,
             
     return model, history
 
-def report_diagnostics(model, source):
+def report_diagnostics(model, source, material):
     bc = BoundaryCondition(num_points=1000)
     boundary_points = bc.sample_points(device=DEVICE)
     max_boundary_error = bc.max_error(model, boundary_points)
     
-    collocation = sample_collocation_points(10000, device=DEVICE)
-    loss_pde, residual = compute_pde_loss(model, collocation, source)
+    collocation = sample_collocation_points(12000, device=DEVICE)
+    loss_pde, residual = compute_pde_loss(model, collocation, source, material)
     residual_rms = torch.sqrt(torch.mean(residual**2)).item()
     
     print("\n========================================")
@@ -292,6 +322,7 @@ def report_diagnostics(model, source):
     print("========================================")
     print(f"Device                  : {DEVICE}")
     print(f"mu0                     : {MU0:.8e} H/m")
+    print(f"MUR_IRON                : {MUR_IRON:.1f}")
     print(f"M0                      : {M0:.6e} A/m")
     print(f"L0                      : {L0:.6e} m")
     print(f"Boundary max |Az|       : {max_boundary_error:.8e} Wb/m")
@@ -343,7 +374,8 @@ def plot_results(model, history):
     plt.show()
 
 if __name__ == "__main__":
-    trained_model, history = train_pinn(epochs=6000, num_collocation=10000, hidden_layers=6, neurons=128, learning_rate=1.0e-3, lbfgs_steps=800)
+    trained_model, history = train_pinn(epochs=6000, num_collocation=12000, hidden_layers=6, neurons=128, learning_rate=1.0e-3, lbfgs_steps=800)
     source = MagnetizationSource()
-    report_diagnostics(trained_model, source)
+    material = MaterialPermeability()
+    report_diagnostics(trained_model, source, material)
     plot_results(trained_model, history)
