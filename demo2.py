@@ -37,7 +37,7 @@ else:
 
 MU0 = 4.0 * math.pi * 1.0e-7
 
-MUR_IRON = 1000.0
+MUR_IRON = 500.0
 
 M0 = 1.0e6
 
