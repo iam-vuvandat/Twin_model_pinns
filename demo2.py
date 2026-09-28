@@ -52,7 +52,7 @@ class MagnetizationSource:
         
         sig_y = torch.sigmoid(self.k * (y + self.wy)) - torch.sigmoid(self.k * (y - self.wy))
         
-        return (-sig_x1 + sig_x2) * sig_y
+        return -(sig_x1 + sig_x2) * sig_y
 
     def physical(self, xy):
         return M0 * self.dimensionless(xy)
@@ -68,7 +68,7 @@ class MagnetizationSource:
         s_y_minus = torch.sigmoid(self.k * (y - self.wy))
         ds_y = self.k * s_y_plus * (1.0 - s_y_plus) - self.k * s_y_minus * (1.0 - s_y_minus)
         
-        return (-sig_x1 + sig_x2) * ds_y
+        return -(sig_x1 + sig_x2) * ds_y
 
     def dmx_dy_physical(self, xy):
         return (M0 / L0) * self.dmx_dy_dimensionless(xy)
