@@ -13,6 +13,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DTYPE = torch.float32
 
 if torch.cuda.is_available():
+    torch.backends.cudnn.benchmark = True
     print(f"[DEBUG] Hardware using for training: GPU ({torch.cuda.get_device_name(0)})")
 else:
     print("[DEBUG] Hardware using for training: CPU")
@@ -23,12 +24,10 @@ M0 = 1.0e6
 A0 = MU0 * M0 * L0
 B0 = MU0 * M0
 
-# Nam châm đặt ngang: Chiều dài theo trục x, bề rộng theo trục y
 LENGTH_X = 0.30
 WIDTH_Y = 0.12
 STEEPNESS = 60.0
 
-# 2 nam châm đặt cùng độ cao (y = 0), nối nhau trên trục x
 MAGNET_OFFSET_X = 1.5 * LENGTH_X
 
 class MagnetizationSource:
@@ -42,15 +41,11 @@ class MagnetizationSource:
         x = xy[:, 0:1]
         y = xy[:, 1:2]
         
-        # Nam châm 1 ở bên trái (x = -offset_x)
         sig_x1 = torch.sigmoid(self.k * (x + self.offset_x + self.lx)) - torch.sigmoid(self.k * (x + self.offset_x - self.lx))
-        # Nam châm 2 ở bên phải (x = +offset_x)
         sig_x2 = torch.sigmoid(self.k * (x - self.offset_x + self.lx)) - torch.sigmoid(self.k * (x - self.offset_x - self.lx))
         
-        # Cả 2 cùng nằm tại y = 0
         sig_y = torch.sigmoid(self.k * (y + self.wy)) - torch.sigmoid(self.k * (y - self.wy))
         
-        # Trái là Bắc (N), Phải là Nam (S) -> Từ hóa M hướng từ Nam sang Bắc (hướng sang trái, chiều âm trục x)
         return -(sig_x1 + sig_x2) * sig_y
 
     def physical(self, xy):
@@ -137,8 +132,9 @@ class MagneticPINN(nn.Module):
             return boundary_factor * raw
         return raw
 
-def sample_collocation_points(num_points, x_min=-1.0, x_max=1.0, y_min=-1.0, y_max=1.0, device=DEVICE):
-    engine = torch.quasirandom.SobolEngine(dimension=2, scramble=True)
+def sample_collocation_points(num_points, x_min=-1.0, x_max=1.0, y_min=-1.0, y_max=1.0, device=DEVICE, engine=None):
+    if engine is None:
+        engine = torch.quasirandom.SobolEngine(dimension=2, scramble=True)
     uv = engine.draw(num_points).to(device=device, dtype=DTYPE)
     
     x = x_min + (x_max - x_min) * uv[:, 0:1]
@@ -221,12 +217,13 @@ def train_pinn(epochs=4000, num_collocation=5000, hidden_layers=4, neurons=64, l
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.5)
     bc = BoundaryCondition(num_points=250)
+    engine = torch.quasirandom.SobolEngine(dimension=2, scramble=True)
     
     history = {"pde": [], "boundary": []}
     
     for epoch in range(1, epochs + 1):
         optimizer.zero_grad(set_to_none=True)
-        xy_collocation = sample_collocation_points(num_collocation, device=DEVICE)
+        xy_collocation = sample_collocation_points(num_collocation, device=DEVICE, engine=engine)
         
         loss_pde, _ = compute_pde_loss(model, xy_collocation, source)
         
