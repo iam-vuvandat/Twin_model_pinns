@@ -37,7 +37,7 @@ else:
 
 MU0 = 4.0 * math.pi * 1.0e-7
 
-MUR_IRON = 500.0
+MUR_IRON = 400.0
 
 M0 = 1.0e6
 
@@ -51,11 +51,13 @@ B0 = MU0 * M0
 # Geometry
 # ============================================================
 
+DOMAIN_EXTENT = 2.0
+
 LENGTH_X = 0.30
 WIDTH_Y = 0.12
 STEEPNESS = 60.0
 
-MAGNET_OFFSET_X = 1.5 * LENGTH_X
+MAGNET_OFFSET_X = 1.1 * LENGTH_X
 
 SPAN_X = MAGNET_OFFSET_X + LENGTH_X
 
@@ -341,10 +343,10 @@ class BoundaryCondition:
 
     def __init__(
         self,
-        x_min=-1.0,
-        x_max=1.0,
-        y_min=-1.0,
-        y_max=1.0,
+        x_min=-DOMAIN_EXTENT,
+        x_max=DOMAIN_EXTENT,
+        y_min=-DOMAIN_EXTENT,
+        y_max=DOMAIN_EXTENT,
         num_points=1000
     ):
         self.x_min = x_min
@@ -535,9 +537,9 @@ class MagneticPINN(nn.Module):
         y = xy[:, 1:2]
 
         return (
-            (1.0 - x**2)
+            (1.0 - (x / DOMAIN_EXTENT)**2)
             *
-            (1.0 - y**2)
+            (1.0 - (y / DOMAIN_EXTENT)**2)
         )
 
     def forward(self, xy):
@@ -569,10 +571,10 @@ def create_sobol_engine(seed=SEED):
 
 def sample_collocation_points(
     num_points,
-    x_min=-1.0,
-    x_max=1.0,
-    y_min=-1.0,
-    y_max=1.0,
+    x_min=-DOMAIN_EXTENT,
+    x_max=DOMAIN_EXTENT,
+    y_min=-DOMAIN_EXTENT,
+    y_max=DOMAIN_EXTENT,
     device=DEVICE,
     engine=None
 ):
@@ -705,15 +707,15 @@ def evaluate_fields(
     model.eval()
 
     x_star = np.linspace(
-        -1.0,
-        1.0,
+        -DOMAIN_EXTENT,
+        DOMAIN_EXTENT,
         resolution,
         dtype=np.float32
     )
 
     y_star = np.linspace(
-        -1.0,
-        1.0,
+        -DOMAIN_EXTENT,
+        DOMAIN_EXTENT,
         resolution,
         dtype=np.float32
     )
@@ -897,8 +899,8 @@ def compute_boundary_flux(
     model.eval()
 
     t = torch.linspace(
-        -1.0,
-        1.0,
+        -DOMAIN_EXTENT,
+        DOMAIN_EXTENT,
         resolution,
         device=device,
         dtype=DTYPE
@@ -906,22 +908,22 @@ def compute_boundary_flux(
 
     y_bottom = torch.full_like(
         t,
-        -1.0
+        -DOMAIN_EXTENT
     )
 
     y_top = torch.full_like(
         t,
-        1.0
+        DOMAIN_EXTENT
     )
 
     x_left = torch.full_like(
         t,
-        -1.0
+        -DOMAIN_EXTENT
     )
 
     x_right = torch.full_like(
         t,
-        1.0
+        DOMAIN_EXTENT
     )
 
     bottom = torch.cat(
