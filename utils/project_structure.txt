@@ -1,0 +1,25 @@
+Twin_model_pinns/
+├── README.md
+├── batch.log
+├── colab.ipynb
+├── demo.py
+├── demo2.py
+├── requirements.txt
+├── src
+│   ├── ansys_electronic_desktop
+│   │   └── rmxprt
+│   │       └── synchronous_machine
+│   │           └── reluctance_synchronous_machine
+│   │               ├── configuation.py
+│   │               ├── reluctance_synchronous_motor.py
+│   │               └── utils
+│   │                   ├── create_model.py
+│   │                   └── reset_ansys_environment.py
+│   ├── model
+│   │   └── ElectroMagneticPINN.py
+│   ├── physics
+│   └── script
+│       └── test1.py
+└── utils
+    ├── extract_project_tree.py
+    └── project_structure.txt
