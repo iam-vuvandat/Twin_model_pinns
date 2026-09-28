@@ -52,7 +52,7 @@ class MagnetizationSource:
         
         sig_y = torch.sigmoid(self.k * (y + self.wy)) - torch.sigmoid(self.k * (y - self.wy))
         
-        return -(sig_x1 + sig_x2) * sig_y
+        return (-sig_x1 + sig_x2) * sig_y
 
     def physical(self, xy):
         return M0 * self.dimensionless(xy)
@@ -68,7 +68,7 @@ class MagnetizationSource:
         s_y_minus = torch.sigmoid(self.k * (y - self.wy))
         ds_y = self.k * s_y_plus * (1.0 - s_y_plus) - self.k * s_y_minus * (1.0 - s_y_minus)
         
-        return -(sig_x1 + sig_x2) * ds_y
+        return (-sig_x1 + sig_x2) * ds_y
 
     def dmx_dy_physical(self, xy):
         return (M0 / L0) * self.dmx_dy_dimensionless(xy)
@@ -339,19 +339,19 @@ def plot_results(model, history):
     Az, Bmag, Mx, dMx_dy = fields["Az"], fields["Bmag"], fields["Mx"], fields["dMx_dy"]
     Bx, By, Mur = fields["Bx"], fields["By"], fields["Mur"]
     
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig, axes = plt.subplots(3, 3, figsize=(22, 18))
     
-    contour1 = axes[0, 0].contourf(X, Y, Az, levels=60, cmap="jet")
-    fig.colorbar(contour1, ax=axes[0, 0], label="A_z (Wb/m)")
+    contour00 = axes[0, 0].contourf(X, Y, Az, levels=60, cmap="jet")
+    fig.colorbar(contour00, ax=axes[0, 0], label="A_z (Wb/m)")
     axes[0, 0].set_title("Magnetic Vector Potential $A_z$")
     
-    contour2 = axes[0, 1].contourf(X, Y, Bmag, levels=60, cmap="jet")
-    fig.colorbar(contour2, ax=axes[0, 1], label="|B| (T)")
+    contour01 = axes[0, 1].contourf(X, Y, Bmag, levels=60, cmap="jet")
+    fig.colorbar(contour01, ax=axes[0, 1], label="|B| (T)")
     axes[0, 1].set_title("Magnetic Flux Density $|B|$")
     
-    contour3 = axes[0, 2].contourf(X, Y, Mur, levels=60, cmap="copper")
-    fig.colorbar(contour3, ax=axes[0, 2], label=r"$\mu_r$")
-    axes[0, 2].set_title("Relative Permeability $\\mu_r$ (Material Profile)")
+    contour02 = axes[0, 2].contourf(X, Y, Mx, levels=60, cmap="viridis")
+    fig.colorbar(contour02, ax=axes[0, 2], label="$M_x$ (A/m)")
+    axes[0, 2].set_title("Prescribed Magnetization $M_x$")
     
     step = 7
     Bx_sub = Bx[::step, ::step]
@@ -361,22 +361,41 @@ def plot_results(model, history):
     scale_factor = np.where(Bmag_sub > 1e-12, Bmag_clipped / (Bmag_sub + 1e-12), 0.0)
     Bx_limited = Bx_sub * scale_factor
     By_limited = By_sub * scale_factor
-    
     axes[1, 0].contourf(X, Y, Bmag, levels=40, cmap="jet", alpha=0.25)
     axes[1, 0].quiver(X[::step, ::step], Y[::step, ::step], Bx_limited, By_limited, scale=4.0, pivot="mid")
     axes[1, 0].set_title("Magnetic Flux Density Vector $\\mathbf{B}$")
     
-    contour5 = axes[1, 1].contourf(X, Y, dMx_dy, levels=60, cmap="coolwarm")
-    fig.colorbar(contour5, ax=axes[1, 1], label=r"$\partial M_x/\partial y$ (A/m$^2$)")
+    contour11 = axes[1, 1].contourf(X, Y, dMx_dy, levels=60, cmap="coolwarm")
+    fig.colorbar(contour11, ax=axes[1, 1], label=r"$\partial M_x/\partial y$ (A/m$^2$)")
     axes[1, 1].set_title("Magnetization Source Term")
     
-    axes[1, 2].semilogy(history["pde"], label="PDE loss")
-    axes[1, 2].semilogy(history["boundary"], label="Boundary error")
-    axes[1, 2].set_title("Training History")
-    axes[1, 2].legend()
-    axes[1, 2].grid(True, alpha=0.3)
+    contour12 = axes[1, 2].contourf(X, Y, Mur, levels=60, cmap="copper")
+    fig.colorbar(contour12, ax=axes[1, 2], label=r"$\mu_r$")
+    axes[1, 2].set_title("Relative Permeability $\\mu_r$ (Iron Yoke Profile)")
     
-    for ax in axes.flat[:5]:
+    material_map = np.zeros_like(X)
+    mag_mask = np.abs(Mx) > (0.1 * M0)
+    iron_mask = Mur > 10.0
+    material_map[mag_mask] = 1.0
+    material_map[iron_mask] = 2.0
+    contour20 = axes[2, 0].contourf(X, Y, material_map, levels=[-0.5, 0.5, 1.5, 2.5], cmap="tab10")
+    cbar20 = fig.colorbar(contour20, ax=axes[2, 0], ticks=[0, 1, 2])
+    cbar20.ax.set_yticklabels(["Air", "Magnets", "Iron Yoke"])
+    axes[2, 0].set_title("Geometric Domains / Material Map")
+    
+    dx = X[0, 1] - X[0, 0]
+    rho_m = -np.gradient(Mx, dx, axis=1)
+    contour21 = axes[2, 1].contourf(X, Y, rho_m, levels=60, cmap="bwr")
+    fig.colorbar(contour21, ax=axes[2, 1], label=r"$-\partial M_x/\partial x$ (Poles)")
+    axes[2, 1].set_title("Magnetic Charge Density $\\rho_m$ (Poles N/S)")
+    
+    axes[2, 2].semilogy(history["pde"], label="PDE loss")
+    axes[2, 2].semilogy(history["boundary"], label="Boundary error")
+    axes[2, 2].set_title("Training History")
+    axes[2, 2].legend()
+    axes[2, 2].grid(True, alpha=0.3)
+    
+    for ax in [axes[0, 0], axes[0, 1], axes[0, 2], axes[1, 0], axes[1, 1], axes[1, 2], axes[2, 0], axes[2, 1]]:
         ax.set_aspect("equal", adjustable="box")
         ax.set_xlabel("x (m)")
         ax.set_ylabel("y (m)")
