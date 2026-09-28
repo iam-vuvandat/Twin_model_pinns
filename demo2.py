@@ -91,6 +91,9 @@ class MaterialPermeability:
         mask_iron = sig_x * sig_y
         return self.nu_air + (self.nu_iron - self.nu_air) * mask_iron
 
+    def mu_r_dimensionless(self, xy):
+        return 1.0 / self.nu_r_dimensionless(xy)
+
 class BoundaryCondition:
     def __init__(self, x_min=-1.0, x_max=1.0, y_min=-1.0, y_max=1.0, num_points=250):
         self.x_min = x_min
@@ -232,13 +235,13 @@ def evaluate_fields(model, resolution=160, device=DEVICE):
     with torch.no_grad():
         Mx = source.physical(xy_detached).cpu().numpy().reshape(X_star.shape)
         dMx_dy = source.dmx_dy_physical(xy_detached).cpu().numpy().reshape(X_star.shape)
-        Nu_r = material.nu_r_dimensionless(xy_detached).cpu().numpy().reshape(X_star.shape)
+        Mur = material.mu_r_dimensionless(xy_detached).cpu().numpy().reshape(X_star.shape)
         
     X = L0 * X_star
     Y = L0 * Y_star
     model.train()
     
-    return {"X": X, "Y": Y, "Az": Az, "Bx": Bx, "By": By, "Bmag": Bmag, "Mx": Mx, "dMx_dy": dMx_dy, "Nu_r": Nu_r}
+    return {"X": X, "Y": Y, "Az": Az, "Bx": Bx, "By": By, "Bmag": Bmag, "Mx": Mx, "dMx_dy": dMx_dy, "Mur": Mur}
 
 def train_pinn(epochs=6000, num_collocation=12000, hidden_layers=6, neurons=128, learning_rate=1.0e-3, print_every=500, lbfgs_steps=800):
     model = MagneticPINN(hidden_layers=hidden_layers, neurons=neurons, hard_boundary=True).to(DEVICE)
@@ -334,7 +337,7 @@ def plot_results(model, history):
     fields = evaluate_fields(model, resolution=160, device=DEVICE)
     X, Y = fields["X"], fields["Y"]
     Az, Bmag, Mx, dMx_dy = fields["Az"], fields["Bmag"], fields["Mx"], fields["dMx_dy"]
-    Bx, By = fields["Bx"], fields["By"]
+    Bx, By, Mur = fields["Bx"], fields["By"], fields["Mur"]
     
     fig, axes = plt.subplots(2, 3, figsize=(18, 10))
     
@@ -346,13 +349,21 @@ def plot_results(model, history):
     fig.colorbar(contour2, ax=axes[0, 1], label="|B| (T)")
     axes[0, 1].set_title("Magnetic Flux Density $|B|$")
     
-    contour3 = axes[0, 2].contourf(X, Y, Mx, levels=60, cmap="viridis")
-    fig.colorbar(contour3, ax=axes[0, 2], label="$M_x$ (A/m)")
-    axes[0, 2].set_title("Prescribed Magnetization $M_x$")
+    contour3 = axes[0, 2].contourf(X, Y, Mur, levels=60, cmap="copper")
+    fig.colorbar(contour3, ax=axes[0, 2], label=r"$\mu_r$")
+    axes[0, 2].set_title("Relative Permeability $\\mu_r$ (Material Profile)")
+    
+    step = 7
+    Bx_sub = Bx[::step, ::step]
+    By_sub = By[::step, ::step]
+    Bmag_sub = np.sqrt(Bx_sub**2 + By_sub**2)
+    Bmag_clipped = np.clip(Bmag_sub, 0.0, 1.0)
+    scale_factor = np.where(Bmag_sub > 1e-12, Bmag_clipped / (Bmag_sub + 1e-12), 0.0)
+    Bx_limited = Bx_sub * scale_factor
+    By_limited = By_sub * scale_factor
     
     axes[1, 0].contourf(X, Y, Bmag, levels=40, cmap="jet", alpha=0.25)
-    step = 7
-    axes[1, 0].quiver(X[::step, ::step], Y[::step, ::step], Bx[::step, ::step], By[::step, ::step], scale=4.0, pivot="mid")
+    axes[1, 0].quiver(X[::step, ::step], Y[::step, ::step], Bx_limited, By_limited, scale=4.0, pivot="mid")
     axes[1, 0].set_title("Magnetic Flux Density Vector $\\mathbf{B}$")
     
     contour5 = axes[1, 1].contourf(X, Y, dMx_dy, levels=60, cmap="coolwarm")
