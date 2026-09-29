@@ -1,84 +1,94 @@
+import torch
+import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 
-def draw_network_diagram():
-    fig, ax = plt.subplots(figsize=(14, 10))
-    ax.axis('off')
+def smooth_minimum(d1, d2, k=10.0):
+    """
+    Phép toán Smooth Union (Exponential Smooth Minimum) khả vi hoàn toàn.
+    Thay thế cho lệnh if-else hoặc min() cứng nhắc.
+    """
+    # Tránh tràn số mũ (overflow/underflow) bằng cách tách giá trị
+    # Hoặc dùng công thức log-sum-exp chuẩn
+    exp_term = torch.exp(-k * d1) + torch.exp(-k * d2)
+    return -torch.log(torch.clamp(exp_term, min=1.0e-12)) / k
+
+def signed_distance_rectangle(xy, width, height, center):
+    """
+    Hàm khoảng cách có hướng (SDF) cho hình chữ nhật.
+    xy: Tensor tọa độ (N, 2)
+    width, height: Kích thước hình chữ nhật
+    center: Tọa độ tâm (x, y)
+    """
+    pos = xy - center
+    d = torch.abs(pos) - torch.tensor([width / 2.0, height / 2.0], device=xy.device)
+    # Khoảng cách bên ngoài cộng với khoảng cách bên trong
+    outside_dist = torch.norm(torch.clamp(d, min=0.0), dim=1)
+    inside_dist = torch.min(torch.max(d[:, 0], d[:, 1]), torch.tensor(0.0, device=xy.device))
+    return outside_dist + inside_dist
+
+def signed_distance_circle(xy, radius, center):
+    """
+    Hàm khoảng cách có hướng (SDF) cho hình tròn.
+    """
+    return radius - torch.norm(xy - center, dim=1)
+
+def compute_differentiable_geometry(xy, d_gap):
+    """
+    Ghép nối hình học: Một hình chữ nhật (gông sắt) và hai hình tròn (nam châm) 
+    cách nhau một khoảng d_gap theo trục y, hoàn toàn khả vi qua PyTorch.
+    """
+    # Tâm hình chữ nhật
+    rect_center = torch.tensor([0.0, 0.0], device=xy.device)
+    d_rect = signed_distance_rectangle(xy, width=1.0, height=0.4, center=rect_center)
     
-    # Hàm hỗ trợ vẽ các khối hộp
-    def draw_box(x, y, width, height, text, facecolor, edgecolor, fontsize=10):
-        box = patches.FancyBboxPatch((x, y), width, height, boxstyle="round,pad=0.1", 
-                                     edgecolor=edgecolor, facecolor=facecolor, lw=2)
-        ax.add_patch(box)
-        ax.text(x + width/2, y + height/2, text, ha='center', va='center', 
-                fontsize=fontsize, fontweight='bold', color='black')
-        return (x + width/2, y), (x + width/2, y + height), (x, y + height/2), (x + width, y + height/2)
-
-    # Hàm hỗ trợ vẽ mũi tên
-    def draw_arrow(start, end, rad=0.0):
-        ax.annotate('', xy=end, xytext=start,
-                    arrowprops=dict(arrowstyle="->", color='black', lw=2, 
-                                    connectionstyle=f"arc3,rad={rad}"))
-
-    # Vẽ nền cho khu vực Mạng nơ-ron
-    network_bg = patches.Rectangle((1.5, 6.5), 11, 2.5, linewidth=2, edgecolor='gray', 
-                                   facecolor='#f5f5f5', linestyle='dashed')
-    ax.add_patch(network_bg)
-    ax.text(7, 8.8, "PARALLEL MULTI-NETWORK ARCHITECTURE", ha='center', va='center', fontsize=12, fontweight='bold', color='gray')
-
-    # Khối 1: Inputs
-    _, in_top, _, _ = draw_box(5.5, 10.5, 3, 1, "Inputs:\n(x, y, d_gap)", '#e8f5e9', '#2e7d32', 12)
-    in_bottom = (7, 10.5)
+    # Tâm 2 nam châm dịch chuyển theo khoảng cách d_gap
+    magnet_top_center = torch.tensor([0.0, 0.2 + d_gap / 2.0], device=xy.device)
+    magnet_bot_center = torch.tensor([0.0, -0.2 - d_gap / 2.0], device=xy.device)
     
-    # Khối 2: Mạng hình học (Trái)
-    geo_bottom, geo_top, _, _ = draw_box(2.5, 7, 4, 1.5, "Geometry Sub-Network\n(MLP: 3 layers x 64)\nOutput: Sigmoid", '#e3f2fd', '#1565c0')
+    d_mag1 = signed_distance_circle(xy, radius=0.25, center=magnet_top_center)
+    d_mag2 = signed_distance_circle(xy, radius=0.25, center=magnet_bot_center)
     
-    # Khối 3: Mạng vật lý (Phải)
-    phys_bottom, phys_top, _, _ = draw_box(7.5, 7, 4, 1.5, "Physics Main-Network\n(MLP: 6 layers x 128)\nOutput: Linear", '#e3f2fd', '#1565c0')
-
-    # Khối 4: Outputs
-    mask_bottom, mask_top, _, _ = draw_box(2.5, 4.5, 4, 1, "Magnetization Mask\nM_x(x, y, d_gap)", '#fff3e0', '#e65100')
-    field_bottom, field_top, _, _ = draw_box(7.5, 4.5, 4, 1, "Electromagnetic Fields\n(A_z, B_x, B_y)", '#fff3e0', '#e65100')
-
-    # Khối 5: PyTorch Autograd
-    _, auto_top, _, _ = draw_box(5.5, 2.5, 3, 1, "PyTorch Autograd\n(Spatial Derivatives)", '#f3e5f5', '#6a1b9a')
-    auto_bottom = (7, 2.5)
-
-    # Khối 6: PDE Loss
-    loss_bottom, loss_top, _, _ = draw_box(4.5, 0.5, 5, 1, "PDE Loss Function\n(Ampere's Law, Gauss's Law)", '#ffebee', '#c62828')
-
-    # Vẽ kết nối (Arrows)
-    # Inputs -> Networks
-    draw_arrow(in_bottom, (4.5, geo_top[1]), rad=0.2)
-    draw_arrow(in_bottom, (9.5, phys_top[1]), rad=-0.2)
+    # Ghép mượt mà các khối bằng Smooth Minimum (Differentiable CSG)
+    combined_magnets = smooth_minimum(d_mag1, d_mag2, k=15.0)
+    final_shape = smooth_minimum(d_rect, combined_magnets, k=10.0)
     
-    # Networks -> Outputs
-    draw_arrow(geo_bottom, mask_top)
-    draw_arrow(phys_bottom, field_top)
-    
-    # Outputs -> Autograd
-    draw_arrow(mask_bottom, (6.5, auto_top[1]), rad=-0.2)
-    draw_arrow(field_bottom, (7.5, auto_top[1]), rad=0.2)
-    
-    # Autograd -> Loss
-    draw_arrow(auto_bottom, loss_top)
-
-    # Cập nhật trọng số (Backpropagation)
-    ax.annotate('', xy=(1, 7.75), xytext=(4.5, 1.0),
-                arrowprops=dict(arrowstyle="->", color='red', lw=2, linestyle='dashed',
-                                connectionstyle="angle,angleA=180,angleB=90,rad=10"))
-    ax.text(2.5, 1.5, "Backpropagation\n(Update Weights)", color='red', fontweight='bold', ha='center')
-
-    plt.title("Parametric PINN with Geometry Sub-Network", fontsize=16, fontweight='bold', pad=20)
-    plt.xlim(0, 14)
-    plt.ylim(-0.5, 12)
-    plt.tight_layout()
-    
-    # Lưu và hiển thị ảnh
-    file_name = "multi_network_pinn_architecture.png"
-    plt.savefig(file_name, dpi=300)
-    print(f"Diagram saved as {file_name}")
-    plt.show()
+    return final_shape
 
 if __name__ == "__main__":
-    draw_network_diagram()
+    # 1. Tạo lưới không gian 2D để kiểm tra
+    resolution = 200
+    x = np.linspace(-1.5, 1.5, resolution)
+    y = np.linspace(-1.5, 1.5, resolution)
+    X, Y = np.meshgrid(x, y)
+    
+    # Chuyển đổi thành PyTorch Tensor và bật requires_grad để kiểm tra tính khả vi
+    xy_np = np.column_stack((X.ravel(), Y.ravel()))
+    xy_tensor = torch.tensor(xy_np, dtype=torch.float32, requires_grad=True)
+    
+    # Giả sử khoảng cách d_gap giữa 2 nam châm là 0.4 mm
+    d_gap_value = 0.4
+    
+    # 2. Tính toán hàm hình học khả vi
+    sdf_values = compute_differentiable_geometry(xy_tensor, d_gap=d_gap_value)
+    
+    # 3. Kiểm tra tính khả vi bằng cách tính đạo hàm không gian tự động (PyTorch Autograd)
+    # Đây chính là cơ chế cốt lõi để đưa vào phương trình Maxwell trong PINN
+    dummy_loss = torch.sum(sdf_values)
+    dummy_loss.backward()
+    
+    print("[INFO] Đạo hàm không gian (Grad) đã được tính toán thành công qua PyTorch Autograd!")
+    print(f"[INFO] Kích thước gradient kiểm tra: {xy_tensor.grad.shape}")
+    
+    # 4. Trực quan hóa hình học mượt mà
+    SDF_grid = sdf_values.detach().numpy().reshape(X.shape)
+    
+    plt.figure(figsize=(8, 8))
+    contour = plt.contourf(X, Y, SDF_grid, levels=50, cmap="coolwarm")
+    plt.colorbar(contour, label="SDF / Material Mask Value")
+    plt.title(f"Differentiable CSG Geometry (d_gap = {d_gap_value})", fontsize=14, fontweight='bold')
+    plt.xlabel("x (m)")
+    plt.ylabel("y (m)")
+    plt.axis("equal")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
