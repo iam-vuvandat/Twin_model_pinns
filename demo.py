@@ -331,7 +331,6 @@ def train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear
 
     print("\n" + "=" * 56 + "\nPHASE 1: LINEAR\n" + "=" * 56)
     material.set_nonlinear_alpha(0.0)
-    adam1, scheduler1 = optim.Adam(model.parameters(), lr=linear_lr), optim.lr_scheduler.CosineAnnealingLR(optim.Adam(model.parameters(), lr=linear_lr), T_max=epochs_linear, eta_min=1.0e-6)
     adam1 = optim.Adam(model.parameters(), lr=linear_lr)
     scheduler1 = optim.lr_scheduler.CosineAnnealingLR(adam1, T_max=epochs_linear, eta_min=1.0e-6)
     
@@ -339,7 +338,7 @@ def train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear
     for epoch in range(1, epochs_linear + 1):
         if adaptive_refinement and (epoch == 1 or epoch % adaptive_interval == 0):
             model.eval()
-            xy_pool = sample_collocation_points(num_collocation * 5, DEVICE, engine_pool)
+            xy_pool = sample_collocation_points(num_collocation * 5, device=DEVICE, engine=engine_pool)
             _, res = compute_pde_loss(model, xy_pool, source, material)
             res_mag = torch.abs(res).squeeze().detach()
             _, idx = torch.topk(res_mag, num_adapt)
@@ -347,7 +346,7 @@ def train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear
             del xy_pool, res, res_mag
             model.train()
 
-        xy_rand = sample_collocation_points(num_random, DEVICE, engine_linear)
+        xy_rand = sample_collocation_points(num_random, device=DEVICE, engine=engine_linear)
         xy = torch.cat([xy_rand, xy_adapt], dim=0).requires_grad_(True) if adaptive_refinement and xy_adapt is not None else xy_rand
 
         adam1.zero_grad(set_to_none=True)
@@ -358,7 +357,7 @@ def train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear
         if epoch == 1 or epoch % print_every_linear == 0: print(f"[Linear Adam] Epoch {epoch:05d} | PDE = {loss.item():.6e} | LR = {adam1.param_groups[0]['lr']:.3e}")
 
     print("\n[Linear L-BFGS]")
-    xy_fixed_linear = sample_collocation_points(lbfgs_collocation, DEVICE, create_sobol_engine(seed=SEED + 1))
+    xy_fixed_linear = sample_collocation_points(lbfgs_collocation, device=DEVICE, engine=create_sobol_engine(seed=SEED + 1))
     if adaptive_refinement and xy_adapt is not None: xy_fixed_linear = torch.cat([xy_fixed_linear, xy_adapt.clone()], dim=0).requires_grad_(True)
     lbfgs1 = optim.LBFGS(model.parameters(), lr=0.8, max_iter=lbfgs_linear, max_eval=max(lbfgs_linear + 50, int(1.25 * lbfgs_linear)), history_size=50, tolerance_grad=1.0e-8, tolerance_change=1.0e-10, line_search_fn="strong_wolfe")
     lbfgs_step_1 = [0]
@@ -371,7 +370,6 @@ def train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear
     lbfgs1.step(closure_linear)
 
     print("\n" + "=" * 56 + "\nPHASE 2: NONLINEAR CONTINUATION\n" + "=" * 56)
-    adam2, scheduler2 = optim.Adam(model.parameters(), lr=nonlinear_lr), optim.lr_scheduler.CosineAnnealingLR(optim.Adam(model.parameters(), lr=nonlinear_lr), T_max=epochs_nonlinear, eta_min=1.0e-6)
     adam2 = optim.Adam(model.parameters(), lr=nonlinear_lr)
     scheduler2 = optim.lr_scheduler.CosineAnnealingLR(adam2, T_max=epochs_nonlinear, eta_min=1.0e-6)
     engine_nonlinear, ramp_epochs = create_sobol_engine(seed=SEED + 2), max(1, int(nonlinear_ramp_fraction * epochs_nonlinear))
@@ -380,7 +378,7 @@ def train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear
     for epoch in range(1, epochs_nonlinear + 1):
         if adaptive_refinement and (epoch == 1 or epoch % adaptive_interval == 0):
             model.eval()
-            xy_pool = sample_collocation_points(num_collocation * 5, DEVICE, engine_pool)
+            xy_pool = sample_collocation_points(num_collocation * 5, device=DEVICE, engine=engine_pool)
             _, res = compute_pde_loss(model, xy_pool, source, material)
             res_mag = torch.abs(res).squeeze().detach()
             _, idx = torch.topk(res_mag, num_adapt)
@@ -388,7 +386,7 @@ def train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear
             del xy_pool, res, res_mag
             model.train()
 
-        xy_rand = sample_collocation_points(num_random, DEVICE, engine_nonlinear)
+        xy_rand = sample_collocation_points(num_random, device=DEVICE, engine=engine_nonlinear)
         xy = torch.cat([xy_rand, xy_adapt], dim=0).requires_grad_(True) if adaptive_refinement and xy_adapt is not None else xy_rand
 
         adam2.zero_grad(set_to_none=True)
@@ -403,7 +401,7 @@ def train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear
 
     print("\n[Nonlinear L-BFGS]")
     material.set_nonlinear_alpha(1.0)
-    xy_fixed_nonlinear = sample_collocation_points(lbfgs_collocation, DEVICE, create_sobol_engine(seed=SEED + 3))
+    xy_fixed_nonlinear = sample_collocation_points(lbfgs_collocation, device=DEVICE, engine=create_sobol_engine(seed=SEED + 3))
     if adaptive_refinement and xy_adapt is not None: xy_fixed_nonlinear = torch.cat([xy_fixed_nonlinear, xy_adapt.clone()], dim=0).requires_grad_(True)
     lbfgs2 = optim.LBFGS(model.parameters(), lr=0.5, max_iter=lbfgs_nonlinear, max_eval=max(lbfgs_nonlinear + 50, int(1.25 * lbfgs_nonlinear)), history_size=50, tolerance_grad=1.0e-8, tolerance_change=1.0e-10, line_search_fn="strong_wolfe")
     lbfgs_step_2 = [0]
