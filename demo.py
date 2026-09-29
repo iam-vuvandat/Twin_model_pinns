@@ -5,6 +5,45 @@ import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
 
+# ============================================================
+# Material Data (Iron.py integration)
+# ============================================================
+
+class Iron:
+    def __init__(self, name: str):
+        self.name = name
+        if name == "M350-50A":
+            self.B_H_curve = {
+                "B_data": np.array([
+                    0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
+                    1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9,
+                    1.956, 2.1, 2.2, 2.2701, 2.4
+                ]),
+                "H_data": np.array([
+                    0.0, 34.8, 46.0, 53.7, 60.6, 67.4, 74.6, 82.6, 91.8, 103.0,
+                    119.0, 141.0, 178.0, 250.0, 455.0, 1180.0, 3020.0, 6100.0,
+                    10700.0, 25000.0, 35000.0, 75000.0, 115000.0, 150000.0, 229580.0
+                ])
+            }
+        
+        elif name == "steel_1008":
+            self.B_H_curve = {
+                "B_data": np.array([
+                    0.0, 0.2402, 0.8654, 1.1106, 1.2458, 1.331, 1.5, 1.6, 1.683, 
+                    1.741, 1.78, 1.905, 2.025, 2.085, 2.13, 2.165, 2.28, 2.485, 2.5851
+                ]),
+                "H_data": np.array([
+                    0.0, 159.2, 318.3, 477.5, 636.6, 795.8, 1591.5, 3183.1, 4774.6, 
+                    6366.2, 7957.7, 15915.5, 31831.0, 47746.5, 63662.0, 79577.5, 
+                    159155.0, 318310.0, 397887.0
+                ])
+            }
+
+        else:   
+            raise ValueError(f"Iron '{name}' not found")
+        
+        self.backup_B_H_curve = None
+
 
 # ============================================================
 # Global configuration
@@ -37,8 +76,12 @@ else:
 
 MU0 = 4.0 * math.pi * 1.0e-7
 
-MUR_IRON_LINEAR = 400.0
-B_SAT_SCALE = 1.5
+IRON_MATERIAL_NAME = "steel_1008"
+
+_tmp_iron = Iron(IRON_MATERIAL_NAME)
+_b_tmp = _tmp_iron.B_H_curve["B_data"][1]
+_h_tmp = _tmp_iron.B_H_curve["H_data"][1]
+MUR_IRON_LINEAR = (_b_tmp / _h_tmp) / MU0
 
 M0 = 1.0e6
 L0 = 1.0
@@ -165,16 +208,19 @@ class MaterialPermeability:
         yoke_lx=YOKE_LENGTH_X,
         yoke_wy=YOKE_WIDTH_Y,
         yoke_offset_y=YOKE_OFFSET_Y,
-        mur_linear=MUR_IRON_LINEAR,
-        b_scale=B_SAT_SCALE,
-        steepness=STEEPNESS
+        steepness=STEEPNESS,
+        iron_name=IRON_MATERIAL_NAME
     ):
         self.lx = float(yoke_lx)
         self.wy = float(yoke_wy)
         self.y0 = float(yoke_offset_y)
 
-        self.mur_linear = float(mur_linear)
-        self.b_scale = float(b_scale)
+        self.iron_data = Iron(iron_name)
+        self.B_data = torch.tensor(self.iron_data.B_H_curve["B_data"], dtype=DTYPE, device=DEVICE)
+        self.H_data = torch.tensor(self.iron_data.B_H_curve["H_data"], dtype=DTYPE, device=DEVICE)
+        self.slope_0 = self.H_data[1] / self.B_data[1]
+
+        self.mur_linear = float(MUR_IRON_LINEAR)
         self.k = float(steepness)
         self.nu_air = 1.0
         
@@ -200,9 +246,24 @@ class MaterialPermeability:
         mask_iron = self.iron_mask(xy)
 
         if self.use_nonlinear and dAz_dx is not None and dAz_dy is not None:
-            B_mag_sq = (B0**2) * (dAz_dx**2 + dAz_dy**2)
-            mur_local = 1.0 + (self.mur_linear - 1.0) / (1.0 + B_mag_sq / (self.b_scale**2))
-            nu_iron_local = 1.0 / mur_local
+            B_mag = B0 * torch.sqrt(dAz_dx**2 + dAz_dy**2 + 1e-12)
+            B_mag_flat = B_mag.view(-1)
+            
+            idx = torch.searchsorted(self.B_data, B_mag_flat)
+            idx = torch.clamp(idx, 1, len(self.B_data) - 1)
+            
+            B0_val = self.B_data[idx - 1]
+            B1_val = self.B_data[idx]
+            H0_val = self.H_data[idx - 1]
+            H1_val = self.H_data[idx]
+            
+            t = (B_mag_flat - B0_val) / (B1_val - B0_val + 1e-12)
+            H_mag_flat = H0_val + t * (H1_val - H0_val)
+            
+            nu_r_flat = MU0 * H_mag_flat / (B_mag_flat + 1e-12)
+            nu_r_flat = torch.where(B_mag_flat < 1e-6, MU0 * self.slope_0, nu_r_flat)
+            
+            nu_iron_local = nu_r_flat.view(B_mag.shape)
         else:
             nu_iron_local = 1.0 / self.mur_linear
 
@@ -611,13 +672,12 @@ def plot_results(model, history, material, resolution=160):
     axes[0, 2].quiver(X_sub, Y_sub, Bx_dir, By_dir, scale=25.0, pivot="mid")
     axes[0, 2].set_title("Magnetic Flux Density Vector $\\mathbf{B}$")
 
-    B_plot = np.linspace(0, 3.5, 300)
-    mur_plot = 1.0 + (MUR_IRON_LINEAR - 1.0) / (1.0 + (B_plot / B_SAT_SCALE)**2)
-    H_plot = B_plot / (MU0 * mur_plot)
-    axes[0, 3].plot(H_plot, B_plot, 'b-', linewidth=3)
+    B_plot = material.iron_data.B_H_curve["B_data"]
+    H_plot = material.iron_data.B_H_curve["H_data"]
+    axes[0, 3].plot(H_plot, B_plot, 'b-', linewidth=3, marker='o', markersize=4)
     axes[0, 3].set_xlabel("H (A/m)")
     axes[0, 3].set_ylabel("B (T)")
-    axes[0, 3].set_title("B-H Curve (Iron Yoke Saturation)")
+    axes[0, 3].set_title(f"B-H Curve ({material.iron_data.name})")
     axes[0, 3].grid(True, alpha=0.5)
 
     contour = axes[1, 0].contourf(X, Y, Mx, levels=60, cmap="viridis")
