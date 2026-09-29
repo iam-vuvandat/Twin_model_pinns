@@ -25,7 +25,7 @@ IRON_MATERIAL_NAME = "steel_1008"
 BH_EXTRAPOLATION, BH_B_EPS = "linear", 1.0e-6
 
 DOMAIN_EXTENT = 2.0
-LENGTH_X, WIDTH_Y, STEEPNESS = 0.30, 0.12, 120.0
+LENGTH_X, WIDTH_Y, STEEPNESS = 0.30, 0.12, 45.0
 MAGNET_OFFSET_X = 1.15 * LENGTH_X
 SPAN_X = MAGNET_OFFSET_X + LENGTH_X
 YOKE_LENGTH_X, YOKE_WIDTH_Y, YOKE_OFFSET_Y = 1.10 * SPAN_X, WIDTH_Y, -(2.0 * WIDTH_Y)
@@ -202,7 +202,7 @@ class MaterialPermeability:
         return B_mag * nu_r / MU0
 
 class MagneticPINN(nn.Module):
-    def __init__(self, hidden_layers=8, neurons=256, hard_boundary=True):
+    def __init__(self, hidden_layers=6, neurons=128, hard_boundary=True):
         super().__init__()
         self.hard_boundary = hard_boundary
         layers = [nn.Linear(2, neurons), nn.SiLU()]
@@ -327,7 +327,7 @@ def report_diagnostics(model, source, material, num_validation=5000):
     print(f"Bmax                   : {val['Bmax']:.8e} T\nHmax                   : {val['Hmax']:.8e} A/m\nmu_r min               : {float(np.min(fields['Mur'])):.8e}\nmu_r max               : {float(np.max(fields['Mur'])):.8e}\nB > BH max fraction    : {100.0 * val['bh_outside_fraction']:.4f}%\n----------------------------------------")
     print(f"Flux bottom            : {flux['bottom']:.8e} Wb/m\nFlux top               : {flux['top']:.8e} Wb/m\nFlux left              : {flux['left']:.8e} Wb/m\nFlux right             : {flux['right']:.8e} Wb/m\nClosed-boundary flux   : {flux['total']:.8e} Wb/m\n========================================\n")
 
-def train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear=1800, lbfgs_nonlinear=100, num_collocation=10000, lbfgs_collocation=5000, hidden_layers=8, neurons=256, linear_lr=1.0e-3, nonlinear_lr=2.0e-4, nonlinear_ramp_fraction=0.40, print_every_linear=250, print_every_nonlinear=100, grad_clip_linear=1.0, grad_clip_nonlinear=0.5, adaptive_refinement=True, adaptive_interval=500, adaptive_ratio=0.3):
+def train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear=1800, lbfgs_nonlinear=100, num_collocation=10000, lbfgs_collocation=5000, hidden_layers=6, neurons=128, linear_lr=1.0e-3, nonlinear_lr=2.0e-4, nonlinear_ramp_fraction=0.40, print_every_linear=250, print_every_nonlinear=100, grad_clip_linear=1.0, grad_clip_nonlinear=0.5, adaptive_refinement=True, adaptive_interval=500, adaptive_ratio=0.05):
     model, source, material = MagneticPINN(hidden_layers, neurons, True).to(DEVICE), MagnetizationSource(), MaterialPermeability()
     history = {"adam_linear": [], "lbfgs_linear": [], "adam_nonlinear": [], "lbfgs_nonlinear": [], "alpha": [], "lr_nonlinear": []}
     
@@ -522,6 +522,6 @@ def plot_results(model, source, material, history, resolution=160):
 if __name__ == "__main__":
     print("\n========================================\n        MAGNETIC PINN CONFIGURATION\n========================================")
     print(f"Material               : {IRON_MATERIAL_NAME}\nLeft polarity          : {LEFT_POLARITY:+.1f}\nRight polarity         : {RIGHT_POLARITY:+.1f}\nDomain                 : [-{DOMAIN_EXTENT}, {DOMAIN_EXTENT}]^2\nM0                     : {M0:.6e} A/m\nB0                     : {B0:.6e} T\n========================================")
-    trained_model, history, source, material = train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear=1800, lbfgs_nonlinear=100, num_collocation=10000, lbfgs_collocation=5000, hidden_layers=8, neurons=256, linear_lr=1.0e-3, nonlinear_lr=2.0e-4, nonlinear_ramp_fraction=0.40, print_every_linear=250, print_every_nonlinear=100, grad_clip_linear=1.0, grad_clip_nonlinear=0.5, adaptive_refinement=True, adaptive_interval=500, adaptive_ratio=0.3)
+    trained_model, history, source, material = train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear=1800, lbfgs_nonlinear=100, num_collocation=10000, lbfgs_collocation=5000, hidden_layers=6, neurons=128, linear_lr=1.0e-3, nonlinear_lr=2.0e-4, nonlinear_ramp_fraction=0.40, print_every_linear=250, print_every_nonlinear=100, grad_clip_linear=1.0, grad_clip_nonlinear=0.5, adaptive_refinement=True, adaptive_interval=500, adaptive_ratio=0.05)
     report_diagnostics(trained_model, source, material, num_validation=5000)
     plot_results(trained_model, source, material, history, resolution=160)
