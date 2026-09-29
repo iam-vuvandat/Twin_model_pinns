@@ -23,6 +23,7 @@ A0, B0 = MU0 * M0 * L0, MU0 * M0
 
 IRON_MATERIAL_NAME = "steel_1008"
 BH_EXTRAPOLATION, BH_B_EPS = "linear", 1.0e-6
+MUR_IRON_FIXED = 200.0
 
 DOMAIN_EXTENT = 2.0
 LENGTH_X, WIDTH_Y, STEEPNESS = 0.30, 0.12, 45.0
@@ -165,7 +166,9 @@ class MaterialPermeability:
     def __init__(self, yoke_lx=YOKE_LENGTH_X, yoke_wy=YOKE_WIDTH_Y, yoke_offset_y=YOKE_OFFSET_Y, steepness=STEEPNESS, iron_name=IRON_MATERIAL_NAME):
         self.lx, self.wy, self.y0, self.k, self.nu_air = float(yoke_lx), float(yoke_wy), float(yoke_offset_y), float(steepness), 1.0
         self.bh_curve = BHCurve(iron_name, device=DEVICE, dtype=DTYPE)
-        self.mur_linear, self.nu_iron_linear, self.nonlinear_alpha = self.bh_curve.mu_r_initial, 1.0 / self.bh_curve.mu_r_initial, 0.0
+        self.mur_linear = MUR_IRON_FIXED
+        self.nu_iron_linear = 1.0 / self.mur_linear
+        self.nonlinear_alpha = 0.0
 
     @property
     def iron_data(self): return self.bh_curve.material
@@ -189,10 +192,7 @@ class MaterialPermeability:
 
     def nu_r_dimensionless(self, xy, Bx=None, By=None):
         mask_iron = self.iron_mask(xy)
-        if self.nonlinear_alpha <= 0.0 or Bx is None or By is None:
-            nu_iron = torch.full_like(mask_iron, self.nu_iron_linear)
-        else:
-            nu_iron = (1.0 - self.nonlinear_alpha) * self.nu_iron_linear + self.nonlinear_alpha * self.nonlinear_reluctivity(self.B_magnitude(Bx, By))
+        nu_iron = torch.full_like(mask_iron, self.nu_iron_linear)
         return self.nu_air + (nu_iron - self.nu_air) * mask_iron
 
     def mu_r_dimensionless(self, xy, Bx=None, By=None):
