@@ -1,9 +1,12 @@
 Twin_model_pinns/
 ├── README.md
 ├── batch.log
-├── colab.ipynb
 ├── demo.py
 ├── demo2.py
+├── demo3.py
+├── draft
+│   └── draw1.py
+├── main.ipynb
 ├── requirements.txt
 ├── src
 │   ├── ansys_electronic_desktop
