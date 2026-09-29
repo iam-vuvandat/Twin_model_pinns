@@ -25,7 +25,7 @@ IRON_MATERIAL_NAME = "steel_1008"
 BH_EXTRAPOLATION, BH_B_EPS = "linear", 1.0e-6
 
 DOMAIN_EXTENT = 2.0
-LENGTH_X, WIDTH_Y, STEEPNESS = 0.30, 0.12, 60.0
+LENGTH_X, WIDTH_Y, STEEPNESS = 0.30, 0.12, 300.0
 MAGNET_OFFSET_X = 1.1 * LENGTH_X
 SPAN_X = MAGNET_OFFSET_X + LENGTH_X
 YOKE_LENGTH_X, YOKE_WIDTH_Y, YOKE_OFFSET_Y = 1.10 * SPAN_X, WIDTH_Y, -(2.0 * WIDTH_Y)
@@ -229,10 +229,22 @@ class MagneticPINN(nn.Module):
 def create_sobol_engine(seed=SEED):
     return torch.quasirandom.SobolEngine(dimension=2, scramble=True, seed=seed)
 
-def sample_collocation_points(num_points, x_min=-DOMAIN_EXTENT, x_max=DOMAIN_EXTENT, y_min=-DOMAIN_EXTENT, y_max=DOMAIN_EXTENT, device=DEVICE, engine=None):
+def sample_collocation_points(num_points, device=DEVICE, engine=None):
     engine = engine if engine is not None else create_sobol_engine()
     uv = engine.draw(num_points).to(device=device, dtype=DTYPE)
-    xy = torch.cat([x_min + (x_max - x_min) * uv[:, 0:1], y_min + (y_max - y_min) * uv[:, 1:2]], dim=1)
+    
+    num_core = int(0.75 * num_points)
+    x_core = -0.8 + 1.6 * uv[:num_core, 0:1]
+    y_core = -0.6 + 1.0 * uv[:num_core, 1:2]
+    
+    x_full = -DOMAIN_EXTENT + 2.0 * DOMAIN_EXTENT * uv[num_core:, 0:1]
+    y_full = -DOMAIN_EXTENT + 2.0 * DOMAIN_EXTENT * uv[num_core:, 1:2]
+    
+    xy = torch.cat([
+        torch.cat([x_core, y_core], dim=1),
+        torch.cat([x_full, y_full], dim=1)
+    ], dim=0)
+    
     xy.requires_grad_(True)
     return xy
 
@@ -331,7 +343,6 @@ def train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear
 
     print("\n" + "=" * 56 + "\nPHASE 1: LINEAR\n" + "=" * 56)
     material.set_nonlinear_alpha(0.0)
-    adam1, scheduler1 = optim.Adam(model.parameters(), lr=linear_lr), optim.lr_scheduler.CosineAnnealingLR(optim.Adam(model.parameters(), lr=linear_lr), T_max=epochs_linear, eta_min=1.0e-6)
     adam1 = optim.Adam(model.parameters(), lr=linear_lr)
     scheduler1 = optim.lr_scheduler.CosineAnnealingLR(adam1, T_max=epochs_linear, eta_min=1.0e-6)
     
@@ -371,7 +382,6 @@ def train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear
     lbfgs1.step(closure_linear)
 
     print("\n" + "=" * 56 + "\nPHASE 2: NONLINEAR CONTINUATION\n" + "=" * 56)
-    adam2, scheduler2 = optim.Adam(model.parameters(), lr=nonlinear_lr), optim.lr_scheduler.CosineAnnealingLR(optim.Adam(model.parameters(), lr=nonlinear_lr), T_max=epochs_nonlinear, eta_min=1.0e-6)
     adam2 = optim.Adam(model.parameters(), lr=nonlinear_lr)
     scheduler2 = optim.lr_scheduler.CosineAnnealingLR(adam2, T_max=epochs_nonlinear, eta_min=1.0e-6)
     engine_nonlinear, ramp_epochs = create_sobol_engine(seed=SEED + 2), max(1, int(nonlinear_ramp_fraction * epochs_nonlinear))
@@ -447,7 +457,7 @@ def plot_results(model, source, material, history, resolution=160):
 
     plt.figure(figsize=(8, 6))
     plt.plot(material.iron_data.B_H_curve["H_data"], material.iron_data.B_H_curve["B_data"], "o-", linewidth=2, markersize=4, label="B-H data")
-    B_op, H_op = Bmag[iron_mask > 0.5], Hmag[iron_mask > 0.5]
+    B_op, H_op = Bmag[iron_mask > 0.95], Hmag[iron_mask > 0.95]
     if B_op.size > 0:
         idx = np.linspace(0, B_op.size - 1, min(3000, B_op.size), dtype=int)
         plt.scatter(H_op[idx], B_op[idx], s=3, alpha=0.20, label="PINN operating points")
