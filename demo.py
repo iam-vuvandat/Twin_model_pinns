@@ -38,7 +38,7 @@ else:
 MU0 = 4.0 * math.pi * 1.0e-7
 
 MUR_IRON_LINEAR = 400.0
-B_SAT_SCALE = 1.5  # Tesla (Knee point for magnetic saturation)
+B_SAT_SCALE = 1.5
 
 M0 = 1.0e6
 L0 = 1.0
@@ -178,7 +178,6 @@ class MaterialPermeability:
         self.k = float(steepness)
         self.nu_air = 1.0
         
-        # Flag to toggle B-H curve
         self.use_nonlinear = False
 
     def iron_mask(self, xy):
@@ -201,12 +200,10 @@ class MaterialPermeability:
         mask_iron = self.iron_mask(xy)
 
         if self.use_nonlinear and dAz_dx is not None and dAz_dy is not None:
-            # Non-linear B-H curve
             B_mag_sq = (B0**2) * (dAz_dx**2 + dAz_dy**2)
             mur_local = 1.0 + (self.mur_linear - 1.0) / (1.0 + B_mag_sq / (self.b_scale**2))
             nu_iron_local = 1.0 / mur_local
         else:
-            # Linear assumption
             nu_iron_local = 1.0 / self.mur_linear
 
         return self.nu_air + (nu_iron_local - self.nu_air) * mask_iron
@@ -447,10 +444,10 @@ def compute_boundary_flux(model, resolution=400, device=DEVICE):
     bx_right, _ = B_at(right)
 
     t_np = t.detach().cpu().numpy().ravel()
-    phi_bottom = np.trapezoid(-by_bottom, t_np)
-    phi_top = np.trapezoid(by_top, t_np)
-    phi_left = np.trapezoid(-bx_left, t_np)
-    phi_right = np.trapezoid(bx_right, t_np)
+    phi_bottom = np.trapz(-by_bottom, t_np)
+    phi_top = np.trapz(by_top, t_np)
+    phi_left = np.trapz(-bx_left, t_np)
+    phi_right = np.trapz(bx_right, t_np)
 
     return {
         "bottom": phi_bottom, "top": phi_top, "left": phi_left, 
@@ -563,7 +560,6 @@ def train_pinn_curriculum(
     print("="*50)
     material.use_nonlinear = True
     
-    # Use a very small learning rate to avoid gradient explosion with the highly non-linear B-H curve
     adam2 = optim.Adam(model.parameters(), lr=5.0e-5)
     
     for epoch in range(1, epochs_nonlinear + 1):
@@ -596,17 +592,14 @@ def plot_results(model, history, material, resolution=160):
 
     fig, axes = plt.subplots(3, 4, figsize=(28, 18))
 
-    # A_z
     contour = axes[0, 0].contourf(X, Y, Az, levels=60, cmap="jet")
     fig.colorbar(contour, ax=axes[0, 0], label="A_z (Wb/m)")
     axes[0, 0].set_title("Magnetic Vector Potential $A_z$")
 
-    # |B|
     contour = axes[0, 1].contourf(X, Y, Bmag, levels=60, cmap="jet")
     fig.colorbar(contour, ax=axes[0, 1], label="|B| (T)")
     axes[0, 1].set_title("Magnetic Flux Density $|B|$")
     
-    # B vector
     step = max(1, resolution // 25)
     X_sub, Y_sub = X[::step, ::step], Y[::step, ::step]
     Bx_sub, By_sub = Bx[::step, ::step], By[::step, ::step]
@@ -618,7 +611,6 @@ def plot_results(model, history, material, resolution=160):
     axes[0, 2].quiver(X_sub, Y_sub, Bx_dir, By_dir, scale=25.0, pivot="mid")
     axes[0, 2].set_title("Magnetic Flux Density Vector $\\mathbf{B}$")
 
-    # Analytical B-H Curve
     B_plot = np.linspace(0, 3.5, 300)
     mur_plot = 1.0 + (MUR_IRON_LINEAR - 1.0) / (1.0 + (B_plot / B_SAT_SCALE)**2)
     H_plot = B_plot / (MU0 * mur_plot)
@@ -628,17 +620,14 @@ def plot_results(model, history, material, resolution=160):
     axes[0, 3].set_title("B-H Curve (Iron Yoke Saturation)")
     axes[0, 3].grid(True, alpha=0.5)
 
-    # Mx
     contour = axes[1, 0].contourf(X, Y, Mx, levels=60, cmap="viridis")
     fig.colorbar(contour, ax=axes[1, 0], label="$M_x$ (A/m)")
     axes[1, 0].set_title("Magnetization $M_x$")
 
-    # dMx/dy
     contour = axes[1, 1].contourf(X, Y, dMx_dy, levels=60, cmap="coolwarm")
     fig.colorbar(contour, ax=axes[1, 1], label=r"$\partial M_x/\partial y$ (A/m$^2$)")
     axes[1, 1].set_title("Magnetization Source Term")
 
-    # Material map
     material_map = np.zeros_like(X)
     mag_mask = np.abs(Mx) > 0.1 * M0
     xy_np = np.column_stack((X.ravel(), Y.ravel())).astype(np.float32)
@@ -654,18 +643,15 @@ def plot_results(model, history, material, resolution=160):
     cbar.ax.set_yticklabels(["Air", "Magnets", "Iron Yoke"])
     axes[1, 2].set_title("Material Map")
     
-    # Magnetic charge density
     rho_m = -np.gradient(Mx, X[0, 1] - X[0, 0], axis=1)
     contour = axes[1, 3].contourf(X, Y, rho_m, levels=60, cmap="bwr")
     fig.colorbar(contour, ax=axes[1, 3], label=r"$\rho_m=-\partial M_x/\partial x$ (A/m$^2$)")
     axes[1, 3].set_title("Magnetic Charge Density")
 
-    # mu_r (Dynamic Permeability)
     contour = axes[2, 0].contourf(X, Y, Mur, levels=60, cmap="copper")
     fig.colorbar(contour, ax=axes[2, 0], label=r"$\mu_r(|B|)$")
     axes[2, 0].set_title("Dynamic Relative Permeability $\\mu_r$")
 
-    # Training history (Curriculum split)
     adam_lin = np.asarray(history["adam_linear"])
     lbfgs_lin = np.asarray(history["lbfgs_linear"])
     adam_nonlin = np.asarray(history["adam_nonlinear"])
@@ -686,7 +672,6 @@ def plot_results(model, history, material, resolution=160):
     axes[2, 1].legend()
     axes[2, 1].grid(True, alpha=0.3)
 
-    # Formatting
     axes[2, 2].axis('off')
     axes[2, 3].axis('off')
 
