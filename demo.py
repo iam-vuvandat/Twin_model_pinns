@@ -331,6 +331,7 @@ def train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear
 
     print("\n" + "=" * 56 + "\nPHASE 1: LINEAR\n" + "=" * 56)
     material.set_nonlinear_alpha(0.0)
+    adam1, scheduler1 = optim.Adam(model.parameters(), lr=linear_lr), optim.lr_scheduler.CosineAnnealingLR(optim.Adam(model.parameters(), lr=linear_lr), T_max=epochs_linear, eta_min=1.0e-6)
     adam1 = optim.Adam(model.parameters(), lr=linear_lr)
     scheduler1 = optim.lr_scheduler.CosineAnnealingLR(adam1, T_max=epochs_linear, eta_min=1.0e-6)
     
@@ -370,6 +371,7 @@ def train_pinn_curriculum(epochs_linear=3000, lbfgs_linear=150, epochs_nonlinear
     lbfgs1.step(closure_linear)
 
     print("\n" + "=" * 56 + "\nPHASE 2: NONLINEAR CONTINUATION\n" + "=" * 56)
+    adam2, scheduler2 = optim.Adam(model.parameters(), lr=nonlinear_lr), optim.lr_scheduler.CosineAnnealingLR(optim.Adam(model.parameters(), lr=nonlinear_lr), T_max=epochs_nonlinear, eta_min=1.0e-6)
     adam2 = optim.Adam(model.parameters(), lr=nonlinear_lr)
     scheduler2 = optim.lr_scheduler.CosineAnnealingLR(adam2, T_max=epochs_nonlinear, eta_min=1.0e-6)
     engine_nonlinear, ramp_epochs = create_sobol_engine(seed=SEED + 2), max(1, int(nonlinear_ramp_fraction * epochs_nonlinear))
@@ -420,39 +422,96 @@ def plot_results(model, source, material, history, resolution=160):
     X, Y, Az, Bx, By, Bmag = fields["X"], fields["Y"], fields["Az"], fields["Bx"], fields["By"], fields["Bmag"]
     Mx, dMx_dy, rho_m, Mur = fields["Mx"], fields["dMx_dy"], fields["rho_m"], fields["Mur"]
     magnet_mask, iron_mask, Hmag = fields["magnet_mask"], fields["iron_mask"], fields["Hmag"]
-    fig, axes = plt.subplots(3, 4, figsize=(28, 19))
-    axes[0, 0].contourf(X, Y, Az, levels=60, cmap="jet"); axes[0, 0].set_title("Magnetic Vector Potential $A_z$")
-    axes[0, 1].contourf(X, Y, Bmag, levels=60, cmap="jet"); axes[0, 1].set_title("Magnetic Flux Density $|B|$")
+
+    plt.figure(figsize=(8, 6))
+    contour = plt.contourf(X, Y, Az, levels=60, cmap="jet")
+    plt.colorbar(contour, label="A_z (Wb/m)")
+    plt.title("Magnetic Vector Potential $A_z$")
+    plt.xlabel("x (m)"); plt.ylabel("y (m)")
+    plt.axis("equal"); plt.tight_layout(); plt.show()
+
+    plt.figure(figsize=(8, 6))
+    contour = plt.contourf(X, Y, Bmag, levels=60, cmap="jet")
+    plt.colorbar(contour, label="|B| (T)")
+    plt.title("Magnetic Flux Density $|B|$")
+    plt.xlabel("x (m)"); plt.ylabel("y (m)")
+    plt.axis("equal"); plt.tight_layout(); plt.show()
+
     step, scale = max(1, resolution // 25), np.maximum(np.sqrt(Bx[::max(1, resolution // 25), ::max(1, resolution // 25)]**2 + By[::max(1, resolution // 25), ::max(1, resolution // 25)]**2), 1.0e-12)
-    axes[0, 2].contourf(X, Y, Bmag, levels=40, cmap="jet", alpha=0.25)
-    axes[0, 2].quiver(X[::step, ::step], Y[::step, ::step], Bx[::step, ::step] / scale, By[::step, ::step] / scale, scale=25.0, pivot="mid"); axes[0, 2].set_title("Magnetic Flux Density Vector $\\mathbf{B}$")
-    axes[0, 3].plot(material.iron_data.B_H_curve["H_data"], material.iron_data.B_H_curve["B_data"], "o-", linewidth=2, markersize=4, label="B-H data")
+    plt.figure(figsize=(8, 6))
+    plt.contourf(X, Y, Bmag, levels=40, cmap="jet", alpha=0.25)
+    plt.quiver(X[::step, ::step], Y[::step, ::step], Bx[::step, ::step] / scale, By[::step, ::step] / scale, scale=25.0, pivot="mid")
+    plt.title("Magnetic Flux Density Vector $\\mathbf{B}$")
+    plt.xlabel("x (m)"); plt.ylabel("y (m)")
+    plt.axis("equal"); plt.tight_layout(); plt.show()
+
+    plt.figure(figsize=(8, 6))
+    plt.plot(material.iron_data.B_H_curve["H_data"], material.iron_data.B_H_curve["B_data"], "o-", linewidth=2, markersize=4, label="B-H data")
     B_op, H_op = Bmag[iron_mask > 0.5], Hmag[iron_mask > 0.5]
     if B_op.size > 0:
         idx = np.linspace(0, B_op.size - 1, min(3000, B_op.size), dtype=int)
-        axes[0, 3].scatter(H_op[idx], B_op[idx], s=3, alpha=0.20, label="PINN operating points")
-    axes[0, 3].set_xlabel("H (A/m)"); axes[0, 3].set_ylabel("B (T)"); axes[0, 3].set_title(f"B-H: {material.iron_data.name}"); axes[0, 3].legend(); axes[0, 3].grid(True, alpha=0.3)
-    axes[1, 0].contourf(X, Y, Mx, levels=60, cmap="viridis"); axes[1, 0].set_title("Magnetization $M_x$")
-    axes[1, 1].contourf(X, Y, dMx_dy, levels=60, cmap="coolwarm"); axes[1, 1].set_title("Magnetization Source Term")
+        plt.scatter(H_op[idx], B_op[idx], s=3, alpha=0.20, label="PINN operating points")
+    plt.xlabel("H (A/m)"); plt.ylabel("B (T)"); plt.title(f"B-H: {material.iron_data.name}")
+    plt.legend(); plt.grid(True, alpha=0.3); plt.tight_layout(); plt.show()
+
+    plt.figure(figsize=(8, 6))
+    contour = plt.contourf(X, Y, Mx, levels=60, cmap="viridis")
+    plt.colorbar(contour, label="$M_x$ (A/m)")
+    plt.title("Magnetization $M_x$")
+    plt.xlabel("x (m)"); plt.ylabel("y (m)")
+    plt.axis("equal"); plt.tight_layout(); plt.show()
+
+    plt.figure(figsize=(8, 6))
+    contour = plt.contourf(X, Y, dMx_dy, levels=60, cmap="coolwarm")
+    plt.colorbar(contour, label=r"$\partial M_x/\partial y$ (A/m$^2$)")
+    plt.title("Magnetization Source Term")
+    plt.xlabel("x (m)"); plt.ylabel("y (m)")
+    plt.axis("equal"); plt.tight_layout(); plt.show()
+
+    plt.figure(figsize=(8, 6))
     material_map = np.zeros_like(X); material_map[iron_mask > 0.5] = 2.0; material_map[(magnet_mask > 0.1) & ~(iron_mask > 0.5)] = 1.0
-    axes[1, 2].contourf(X, Y, material_map, levels=[-0.5, 0.5, 1.5, 2.5], cmap="tab10"); axes[1, 2].set_title("Material Map")
-    axes[1, 3].contourf(X, Y, rho_m, levels=60, cmap="bwr"); axes[1, 3].set_title("Magnetic Charge Density")
-    axes[2, 0].contourf(X, Y, Mur, levels=60, cmap="copper"); axes[2, 0].set_title("Relative Permeability")
-    axes[2, 1].contourf(X, Y, Hmag, levels=60, cmap="plasma"); axes[2, 1].set_title("Constitutive H Magnitude")
+    contour = plt.contourf(X, Y, material_map, levels=[-0.5, 0.5, 1.5, 2.5], cmap="tab10")
+    cbar = plt.colorbar(contour, ticks=[0, 1, 2])
+    cbar.ax.set_yticklabels(["Air", "Magnets", "Iron Yoke"])
+    plt.title("Material Map")
+    plt.xlabel("x (m)"); plt.ylabel("y (m)")
+    plt.axis("equal"); plt.tight_layout(); plt.show()
+
+    plt.figure(figsize=(8, 6))
+    contour = plt.contourf(X, Y, rho_m, levels=60, cmap="bwr")
+    plt.colorbar(contour, label=r"$\rho_m=-\partial M_x/\partial x$ (A/m$^2$)")
+    plt.title("Magnetic Charge Density")
+    plt.xlabel("x (m)"); plt.ylabel("y (m)")
+    plt.axis("equal"); plt.tight_layout(); plt.show()
+
+    plt.figure(figsize=(8, 6))
+    contour = plt.contourf(X, Y, Mur, levels=60, cmap="copper")
+    plt.colorbar(contour, label=r"$\mu_r(|B|)$")
+    plt.title("Relative Permeability")
+    plt.xlabel("x (m)"); plt.ylabel("y (m)")
+    plt.axis("equal"); plt.tight_layout(); plt.show()
+
+    plt.figure(figsize=(8, 6))
+    contour = plt.contourf(X, Y, Hmag, levels=60, cmap="plasma")
+    plt.colorbar(contour, label="H (A/m)")
+    plt.title("Constitutive H Magnitude")
+    plt.xlabel("x (m)"); plt.ylabel("y (m)")
+    plt.axis("equal"); plt.tight_layout(); plt.show()
+
+    plt.figure(figsize=(8, 6))
     adam_lin, lbfgs_lin, adam_nonlin, lbfgs_nonlin = np.asarray(history["adam_linear"]), np.asarray(history["lbfgs_linear"]), np.asarray(history["adam_nonlinear"]), np.asarray(history["lbfgs_nonlinear"])
     cursor = 0
-    if adam_lin.size > 0: axes[2, 2].semilogy(np.arange(1, len(adam_lin) + 1), np.maximum(adam_lin, 1.0e-20), label="Adam - Linear"); cursor += len(adam_lin)
-    if lbfgs_lin.size > 0: axes[2, 2].semilogy(np.arange(cursor + 1, cursor + len(lbfgs_lin) + 1), np.maximum(lbfgs_lin, 1.0e-20), label="L-BFGS - Linear"); cursor += len(lbfgs_lin)
-    if adam_nonlin.size > 0: axes[2, 2].semilogy(np.arange(cursor + 1, cursor + len(adam_nonlin) + 1), np.maximum(adam_nonlin, 1.0e-20), label="Adam - Nonlinear"); cursor += len(adam_nonlin)
-    if lbfgs_nonlin.size > 0: axes[2, 2].semilogy(np.arange(cursor + 1, cursor + len(lbfgs_nonlin) + 1), np.maximum(lbfgs_nonlin, 1.0e-20), label="L-BFGS - Nonlinear")
-    axes[2, 2].set_title("PDE Training History"); axes[2, 2].set_xlabel("Training evaluation"); axes[2, 2].set_ylabel("PDE loss"); axes[2, 2].legend(); axes[2, 2].grid(True, alpha=0.3)
+    if adam_lin.size > 0: plt.semilogy(np.arange(1, len(adam_lin) + 1), np.maximum(adam_lin, 1.0e-20), label="Adam - Linear"); cursor += len(adam_lin)
+    if lbfgs_lin.size > 0: plt.semilogy(np.arange(cursor + 1, cursor + len(lbfgs_lin) + 1), np.maximum(lbfgs_lin, 1.0e-20), label="L-BFGS - Linear"); cursor += len(lbfgs_lin)
+    if adam_nonlin.size > 0: plt.semilogy(np.arange(cursor + 1, cursor + len(adam_nonlin) + 1), np.maximum(adam_nonlin, 1.0e-20), label="Adam - Nonlinear"); cursor += len(adam_nonlin)
+    if lbfgs_nonlin.size > 0: plt.semilogy(np.arange(cursor + 1, cursor + len(lbfgs_nonlin) + 1), np.maximum(lbfgs_nonlin, 1.0e-20), label="L-BFGS - Nonlinear")
+    plt.title("PDE Training History"); plt.xlabel("Training evaluation"); plt.ylabel("PDE loss"); plt.legend(); plt.grid(True, alpha=0.3)
+    plt.tight_layout(); plt.show()
+
+    plt.figure(figsize=(8, 6))
     alpha_hist = np.asarray(history["alpha"])
-    if alpha_hist.size > 0: axes[2, 3].plot(np.arange(1, len(alpha_hist) + 1), alpha_hist, linewidth=2)
-    axes[2, 3].set_title("Nonlinear Continuation Parameter"); axes[2, 3].set_xlabel("Nonlinear epoch"); axes[2, 3].set_ylabel(r"$\alpha$"); axes[2, 3].set_ylim(-0.05, 1.05); axes[2, 3].grid(True, alpha=0.3)
-    for row in range(3):
-        for col in range(4):
-            if row < 2 or col < 2: axes[row, col].set_xlabel("x (m)"); axes[row, col].set_ylabel("y (m)")
-    for ax in [axes[0, 0], axes[0, 1], axes[0, 2], axes[1, 0], axes[1, 1], axes[1, 2], axes[1, 3], axes[2, 0], axes[2, 1]]: ax.set_aspect("equal", adjustable="box"); ax.set_xlabel("x (m)"); ax.set_ylabel("y (m)")
+    if alpha_hist.size > 0: plt.plot(np.arange(1, len(alpha_hist) + 1), alpha_hist, linewidth=2)
+    plt.title("Nonlinear Continuation Parameter"); plt.xlabel("Nonlinear epoch"); plt.ylabel(r"$\alpha$"); plt.ylim(-0.05, 1.05); plt.grid(True, alpha=0.3)
     plt.tight_layout(); plt.show()
 
 if __name__ == "__main__":
