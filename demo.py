@@ -25,8 +25,8 @@ IRON_MATERIAL_NAME = "steel_1008"
 BH_EXTRAPOLATION, BH_B_EPS = "linear", 1.0e-6
 
 DOMAIN_EXTENT = 2.0
-LENGTH_X, WIDTH_Y, STEEPNESS = 0.30, 0.12, 300.0
-MAGNET_OFFSET_X = 1.1 * LENGTH_X
+LENGTH_X, WIDTH_Y, STEEPNESS = 0.30, 0.12, 120.0
+MAGNET_OFFSET_X = 1.15 * LENGTH_X
 SPAN_X = MAGNET_OFFSET_X + LENGTH_X
 YOKE_LENGTH_X, YOKE_WIDTH_Y, YOKE_OFFSET_Y = 1.10 * SPAN_X, WIDTH_Y, -(2.0 * WIDTH_Y)
 LEFT_POLARITY, RIGHT_POLARITY = -1.0, +1.0
@@ -44,7 +44,7 @@ class Iron:
     }
 
     def __init__(self, name: str):
-        if name not in self._DATABASE: raise ValueError(f"Iron '{name}' not found. Available: {list(self._DATABASE.keys())}")
+        if name not in self._DATABASE: raise ValueError(f"Iron '{name}' not found.")
         data = self._DATABASE[name]
         self.name = name
         self.B_H_curve = {"B_data": data["B_data"].copy(), "H_data": data["H_data"].copy()}
@@ -52,16 +52,13 @@ class Iron:
 
     def _validate(self):
         B, H = self.B_H_curve["B_data"], self.B_H_curve["H_data"]
-        if len(B) != len(H): raise ValueError("B-H data length mismatch.")
-        if len(B) < 3: raise ValueError("At least 3 B-H points are required.")
-        if not np.isclose(B[0], 0.0) or not np.isclose(H[0], 0.0): raise ValueError("B-H curve must start at B=0 and H=0.")
-        if np.any(np.diff(B) <= 0.0): raise ValueError("B_data must be strictly increasing.")
-        if np.any(np.diff(H) < 0.0): raise ValueError("H_data must be non-decreasing.")
+        if len(B) != len(H) or len(B) < 3: raise ValueError("Invalid B-H data.")
+        if not np.isclose(B[0], 0.0) or not np.isclose(H[0], 0.0): raise ValueError("Curve must start at 0.")
+        if np.any(np.diff(B) <= 0.0) or np.any(np.diff(H) < 0.0): raise ValueError("Invalid B-H monotonicity.")
 
 def compute_pchip_slopes(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     x, y = np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)
     n = len(x)
-    if n < 2: raise ValueError("At least two points are required.")
     h = np.diff(x)
     delta = np.diff(y) / h
     d = np.zeros_like(x)
@@ -112,10 +109,7 @@ class BHCurve:
         t2, t3 = t * t, t * t * t
         H_inside = (2.0 * t3 - 3.0 * t2 + 1.0) * H0_val + (t3 - 2.0 * t2 + t) * h * d0_val + (-2.0 * t3 + 3.0 * t2) * H1_val + (t3 - t2) * h * d1_val
         H_below = self.H_data[0] + self.dH_dB_data[0] * (B_flat - self.B_data[0])
-        if BH_EXTRAPOLATION == "linear":
-            H_above = self.H_data[-1] + self.dH_dB_data[-1] * (B_flat - self.B_data[-1])
-        else:
-            raise ValueError(f"Unsupported BH_EXTRAPOLATION: {BH_EXTRAPOLATION}")
+        H_above = self.H_data[-1] + self.dH_dB_data[-1] * (B_flat - self.B_data[-1])
         H = torch.where(B_flat < self.B_min, H_below, torch.where(B_flat > self.B_max, H_above, H_inside))
         return H.reshape(original_shape)
 
@@ -179,16 +173,19 @@ class MaterialPermeability:
     @property
     def B_max_data(self): return self.bh_curve.B_max
 
-    def set_nonlinear_alpha(self, alpha): self.nonlinear_alpha = float(np.clip(alpha, 0.0, 1.0))
+    def set_nonlinear_alpha(self, alpha): 
+        self.nonlinear_alpha = float(np.clip(alpha, 0.0, 1.0))
 
     def iron_mask(self, xy):
         sig_x = torch.sigmoid(self.k * (xy[:, 0:1] + self.lx)) - torch.sigmoid(self.k * (xy[:, 0:1] - self.lx))
         sig_y = torch.sigmoid(self.k * (xy[:, 1:2] - self.y0 + self.wy)) - torch.sigmoid(self.k * (xy[:, 1:2] - self.y0 - self.wy))
         return sig_x * sig_y
 
-    def B_magnitude(self, dAz_dx, dAz_dy): return B0 * torch.sqrt(dAz_dx**2 + dAz_dy**2 + 1.0e-12)
+    def B_magnitude(self, dAz_dx, dAz_dy): 
+        return B0 * torch.sqrt(dAz_dx**2 + dAz_dy**2 + 1.0e-12)
 
-    def nonlinear_reluctivity(self, B_mag): return self.bh_curve.relative_reluctivity(B_mag)
+    def nonlinear_reluctivity(self, B_mag): 
+        return self.bh_curve.relative_reluctivity(B_mag)
 
     def nu_r_dimensionless(self, xy, dAz_dx=None, dAz_dy=None):
         mask_iron = self.iron_mask(xy)
@@ -201,14 +198,16 @@ class MaterialPermeability:
     def mu_r_dimensionless(self, xy, dAz_dx=None, dAz_dy=None):
         return 1.0 / torch.clamp(self.nu_r_dimensionless(xy, dAz_dx, dAz_dy), min=1.0e-12)
 
-    def H_magnitude(self, B_mag, nu_r): return B_mag * nu_r / MU0
+    def H_magnitude(self, B_mag, nu_r): 
+        return B_mag * nu_r / MU0
 
 class MagneticPINN(nn.Module):
     def __init__(self, hidden_layers=8, neurons=256, hard_boundary=True):
         super().__init__()
         self.hard_boundary = hard_boundary
         layers = [nn.Linear(2, neurons), nn.SiLU()]
-        for _ in range(hidden_layers - 1): layers += [nn.Linear(neurons, neurons), nn.SiLU()]
+        for _ in range(hidden_layers - 1): 
+            layers += [nn.Linear(neurons, neurons), nn.SiLU()]
         layers.append(nn.Linear(neurons, 1))
         self.net = nn.Sequential(*layers)
         self._initialize_weights()
@@ -240,11 +239,7 @@ def sample_collocation_points(num_points, device=DEVICE, engine=None):
     x_full = -DOMAIN_EXTENT + 2.0 * DOMAIN_EXTENT * uv[num_core:, 0:1]
     y_full = -DOMAIN_EXTENT + 2.0 * DOMAIN_EXTENT * uv[num_core:, 1:2]
     
-    xy = torch.cat([
-        torch.cat([x_core, y_core], dim=1),
-        torch.cat([x_full, y_full], dim=1)
-    ], dim=0)
-    
+    xy = torch.cat([torch.cat([x_core, y_core], dim=1), torch.cat([x_full, y_full], dim=1)], dim=0)
     xy.requires_grad_(True)
     return xy
 

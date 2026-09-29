@@ -23,11 +23,11 @@
   "git.enableSmartCommit": true,
   "git.confirmSync": false,
   "emeraldwalk.runonsave": {
-    "commands": [
-      {
-        "match": "\\.(py|ipynb)$",
-        "cmd": "git add . && git commit -m \"Auto sync on save\" && git push origin main"
-      }
-    ]
-  }
+  "commands": [
+    {
+      "match": "\\.(py|ipynb)$",
+      "cmd": "git add . && git commit -m \"Auto commit on save\" && git pull --rebase origin main && git push origin main"
+    }
+  ]
+}
 }
