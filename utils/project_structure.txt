@@ -18,11 +18,25 @@ Twin_model_pinns/
 │   │               └── utils
 │   │                   ├── create_model.py
 │   │                   └── reset_ansys_environment.py
-│   ├── model
-│   │   └── ElectroMagneticPINN.py
-│   ├── physics
-│   └── script
-│       └── test1.py
+│   ├── physics_informed_model
+│   │   ├── geometry_engine
+│   │   │   └── geometry.py
+│   │   ├── neural_networks
+│   │   │   ├── physics_neural_network.py
+│   │   │   ├── pinn_architecture.py
+│   │   │   └── training_manager.py
+│   │   ├── physics_domain
+│   │   │   ├── materials
+│   │   │   │   ├── material.py
+│   │   │   │   └── material_permeability_properties.py
+│   │   │   └── physical_equations
+│   │   │       └── maxwell_pde_loss.py
+│   │   └── trial_function_wrapper.py
+│   └── training_manager
+│       ├── collocation_sampling
+│       │   └── collocation_sampling.py
+│       └── curriculum_training_manager.py
 └── utils
     ├── extract_project_tree.py
+    ├── generate_project.py
     └── project_structure.txt
