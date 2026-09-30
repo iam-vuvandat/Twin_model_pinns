@@ -4,7 +4,7 @@ class MaxwellPDELoss:
     def __init__(self):
         pass
 
-    def compute_residual(self, xy, A_z, nu, J_z):
+    def compute_residual(self, xy, A_z, nu, J_z, H_cx, H_cy):
         grad_A = torch.autograd.grad(
             outputs=A_z,
             inputs=xy,
@@ -16,8 +16,8 @@ class MaxwellPDELoss:
         dAz_dx = grad_A[:, 0:1]
         dAz_dy = grad_A[:, 1:2]
         
-        H_x = nu * dAz_dy
-        H_y = -nu * dAz_dx
+        H_x = nu * dAz_dy - H_cx
+        H_y = -nu * dAz_dx - H_cy
         
         grad_Hx = torch.autograd.grad(
             outputs=H_x,
