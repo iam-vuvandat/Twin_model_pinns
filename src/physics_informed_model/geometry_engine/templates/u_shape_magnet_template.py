@@ -1,3 +1,4 @@
+import torch
 from src.physics_informed_model.geometry_engine.geometry import Polygon
 
 class UShapeMagnetTemplate:
@@ -36,3 +37,36 @@ class UShapeMagnetTemplate:
         air_domain = air_box - magnet_u_shape
         
         return air_domain, magnet_u_shape, air_box
+
+if __name__ == "__main__":
+    import os
+    import matplotlib.pyplot as plt
+    import sys
+    
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..')))
+    
+    template = UShapeMagnetTemplate(width=2.0, height=3.0, thickness=0.5, air_box_size=5.0)
+    air_domain, magnet_u_shape, air_box = template.build()
+    
+    x = torch.linspace(-3, 3, 200)
+    y = torch.linspace(-3, 3, 200)
+    X, Y = torch.meshgrid(x, y, indexing='ij')
+    xy = torch.stack([X.flatten(), Y.flatten()], dim=1)
+    
+    sdf_magnet = magnet_u_shape.compute_sdf(xy)
+    mask_magnet = sdf_magnet <= 0
+    
+    xy_np = xy.detach().numpy()
+    mask_np = mask_magnet.detach().numpy()
+    
+    plt.figure(figsize=(6, 6))
+    plt.scatter(xy_np[mask_np, 0], xy_np[mask_np, 1], c='red', label='Magnet', s=2)
+    plt.scatter(xy_np[~mask_np, 0], xy_np[~mask_np, 1], c='lightblue', alpha=0.3, label='Air', s=2)
+    plt.xlim(-3, 3)
+    plt.ylim(-3, 3)
+    plt.legend()
+    plt.title("U-Shape Magnet Geometry")
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.grid(True)
+    plt.show()
