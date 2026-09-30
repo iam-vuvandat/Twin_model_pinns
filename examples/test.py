@@ -1,5 +1,8 @@
-import torch
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import torch
 from src.physics_informed_model.geometry_engine.geometry import Polygon
 from src.physics_informed_model.physics_domain.physical_equations.maxwell_partial_differential_equation_loss import MaxwellPDELoss
 from src.physics_informed_model.physics_domain.physical_equations.subdomain_material_mapping import MaterialMapping
