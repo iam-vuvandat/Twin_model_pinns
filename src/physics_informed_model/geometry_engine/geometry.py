@@ -1,5 +1,6 @@
 import torch
 from abc import ABC, abstractmethod
+import numpy as np
 
 class Geometry(ABC):
     def __init__(self, material_name=None):
@@ -21,7 +22,6 @@ class Geometry(ABC):
 
     def __sub__(self, other):
         return BooleanDifference(self, other)
-
 
 class Polygon(Geometry):
     def __init__(self, vertices=None, material_name=None):
@@ -75,7 +75,6 @@ class Polygon(Geometry):
         
         return sign * min_distances
 
-
 class BooleanUnion(Geometry):
     def __init__(self, geom1, geom2):
         super().__init__()
@@ -86,7 +85,6 @@ class BooleanUnion(Geometry):
         sdf1 = self.geom1.compute_sdf(points)
         sdf2 = self.geom2.compute_sdf(points)
         return torch.minimum(sdf1, sdf2)
-
 
 class BooleanIntersection(Geometry):
     def __init__(self, geom1, geom2):
@@ -99,7 +97,6 @@ class BooleanIntersection(Geometry):
         sdf2 = self.geom2.compute_sdf(points)
         return torch.maximum(sdf1, sdf2)
 
-
 class BooleanDifference(Geometry):
     def __init__(self, geom1, geom2):
         super().__init__()
@@ -111,10 +108,8 @@ class BooleanDifference(Geometry):
         sdf2 = self.geom2.compute_sdf(points)
         return torch.maximum(sdf1, -sdf2)
 
-
 def evaluate_generalized_sdf(points, geometry: Geometry):
     return geometry.compute_sdf(points)
-
 
 def get_subdomain_material_masks(points, geometry_dict):
     device = points.device
@@ -124,24 +119,31 @@ def get_subdomain_material_masks(points, geometry_dict):
         masks[mat_name] = (sdf_vals <= 0).to(torch.float32)
     return masks
 
-
 if __name__ == "__main__":
-    import numpy as np
     import matplotlib.pyplot as plt
 
-    base_rect_vertices = [
-        [-2.0, 2.0], [2.0, 2.0], [2.0, -2.0], [-2.0, -2.0]
-    ]
-    slot_vertices = [
-        [-0.5, 2.0], [0.5, 2.0], [0.5, 0.5], [-0.5, 0.5]
-    ]
-    
-    stator_base = Polygon().set_material("iron").set_vertices(base_rect_vertices)
-    slot_air = Polygon().set_material("air").set_vertices(slot_vertices)
-    
-    stator_with_slot = stator_base - slot_air
+    def generate_circle_vertices(radius, num_points=64):
+        angles = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
+        return [[radius * np.cos(a), radius * np.sin(a)] for a in angles]
 
-    resolution = 250
+    stator_outer_vertices = generate_circle_vertices(2.0, 64)
+    stator_inner_vertices = generate_circle_vertices(1.2, 64)
+    
+    stator_outer = Polygon().set_material("iron").set_vertices(stator_outer_vertices)
+    stator_bore = Polygon().set_material("air").set_vertices(stator_inner_vertices)
+    
+    stator_core = stator_outer - stator_bore
+
+    slot_1 = Polygon().set_vertices([[-0.2, 2.0], [0.2, 2.0], [0.2, 1.0], [-0.2, 1.0]])
+    slot_2 = Polygon().set_vertices([[-0.2, -2.0], [0.2, -2.0], [0.2, -1.0], [-0.2, -1.0]])
+    slot_3 = Polygon().set_vertices([[1.0, -0.2], [2.0, -0.2], [2.0, 0.2], [1.0, 0.2]])
+    slot_4 = Polygon().set_vertices([[-2.0, -0.2], [-1.0, -0.2], [-1.0, 0.2], [-2.0, 0.2]])
+    
+    all_slots = slot_1 | slot_2 | slot_3 | slot_4
+
+    complex_stator = stator_core - all_slots
+
+    resolution = 350
     x = np.linspace(-2.5, 2.5, resolution)
     y = np.linspace(-2.5, 2.5, resolution)
     X, Y = np.meshgrid(x, y)
@@ -149,14 +151,14 @@ if __name__ == "__main__":
     xy_np = np.column_stack((X.ravel(), Y.ravel()))
     test_points = torch.tensor(xy_np, dtype=torch.float32)
 
-    sdf_machine = evaluate_generalized_sdf(test_points, stator_with_slot)
+    sdf_machine = evaluate_generalized_sdf(test_points, complex_stator)
     SDF_grid = sdf_machine.numpy().reshape(resolution, resolution)
 
     plt.figure(figsize=(7, 6))
     contour = plt.contourf(X, Y, SDF_grid, levels=60, cmap="coolwarm")
     plt.contour(X, Y, SDF_grid, levels=[0.0], colors="black", linewidths=2.5)
     
-    plt.title("Generalized SDF: Complex Stator Using Polygon & Boolean Ops")
+    plt.title("Generalized SDF: Complex Stator (4 Slots via Boolean Ops)")
     plt.xlabel("x")
     plt.ylabel("y")
     plt.axis("equal")
