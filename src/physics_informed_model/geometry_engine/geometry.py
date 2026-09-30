@@ -1,6 +1,8 @@
 import torch
 from abc import ABC, abstractmethod
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 
 class Geometry(ABC):
     def __init__(self, material_name=None):
@@ -120,8 +122,6 @@ def get_subdomain_material_masks(points, geometry_dict):
     return masks
 
 if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-
     def generate_circle_vertices(radius, num_points=64):
         angles = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
         return [[radius * np.cos(a), radius * np.sin(a)] for a in angles]
@@ -155,10 +155,18 @@ if __name__ == "__main__":
     SDF_grid = sdf_machine.numpy().reshape(resolution, resolution)
 
     plt.figure(figsize=(7, 6))
-    contour = plt.contourf(X, Y, SDF_grid, levels=60, cmap="coolwarm")
+    
+    vmin = SDF_grid.min()
+    vmax = SDF_grid.max()
+    levels = np.linspace(vmin, vmax, 60)
+    
+    cmap = mcolors.LinearSegmentedColormap.from_list("custom_red_white_blue", ["red", "white", "blue"])
+    norm = mcolors.TwoSlopeNorm(vmin=vmin if vmin < 0 else -1e-5, vcenter=0.0, vmax=vmax if vmax > 0 else 1e-5)
+    
+    contour = plt.contourf(X, Y, SDF_grid, levels=levels, cmap=cmap, norm=norm)
     plt.contour(X, Y, SDF_grid, levels=[0.0], colors="black", linewidths=2.5)
     
-    plt.title("Generalized SDF: Complex Stator (4 Slots via Boolean Ops)")
+    plt.title("Generalized SDF: Complex Stator (Red < 0, White = 0, Blue > 0)")
     plt.xlabel("x")
     plt.ylabel("y")
     plt.axis("equal")
