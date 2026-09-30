@@ -18,7 +18,12 @@ def generate_u_shape_template():
         with open(init_file, 'w', encoding='utf-8') as f:
             f.write('')
             
-    u_shape_code = """import torch
+    u_shape_code = """import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..')))
+
+import torch
 from src.physics_informed_model.geometry_engine.geometry import Polygon
 
 class UShapeMagnetTemplate:
@@ -60,9 +65,6 @@ class UShapeMagnetTemplate:
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
-    import sys
-    
-    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..')))
     
     template = UShapeMagnetTemplate(width=2.0, height=3.0, thickness=0.5, air_box_size=5.0)
     air_domain, magnet_u_shape, air_box = template.build()
