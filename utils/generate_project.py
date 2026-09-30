@@ -1,68 +1,66 @@
 import os
-import shutil
 
-def reorganize_project():
+def generate_u_shape_template():
     base_dir = os.getcwd()
     
-    examples_dir = os.path.join(base_dir, 'examples')
-    os.makedirs(examples_dir, exist_ok=True)
+    template_dir = os.path.join(
+        base_dir, 
+        'src', 
+        'physics_informed_model', 
+        'geometry_engine', 
+        'templates'
+    )
     
-    for demo_file in ['demo.py', 'demo2.py', 'demo3.py']:
-        src = os.path.join(base_dir, demo_file)
-        if os.path.exists(src):
-            shutil.move(src, os.path.join(examples_dir, demo_file))
-            
-    ansys_old = os.path.join(base_dir, 'src', 'ansys_electronic_desktop', 'rmxprt', 'synchronous_machine', 'reluctance_synchronous_machine')
-    ansys_new = os.path.join(base_dir, 'src', 'ansys_aedt')
-    os.makedirs(ansys_new, exist_ok=True)
+    os.makedirs(template_dir, exist_ok=True)
     
-    if os.path.exists(ansys_old):
-        config_old = os.path.join(ansys_old, 'configuation.py')
-        if os.path.exists(config_old):
-            shutil.move(config_old, os.path.join(ansys_new, 'configuration.py'))
+    init_file = os.path.join(template_dir, '__init__.py')
+    if not os.path.exists(init_file):
+        with open(init_file, 'w', encoding='utf-8') as f:
+            f.write('')
             
-        for f in ['reluctance_synchronous_motor.py']:
-            src = os.path.join(ansys_old, f)
-            if os.path.exists(src):
-                shutil.move(src, os.path.join(ansys_new, f))
-                
-        utils_old = os.path.join(ansys_old, 'utils')
-        if os.path.exists(utils_old):
-            for f in ['create_model.py', 'reset_ansys_environment.py']:
-                src = os.path.join(utils_old, f)
-                if os.path.exists(src):
-                    shutil.move(src, os.path.join(ansys_new, f))
-                    
-    pinn_dir = os.path.join(base_dir, 'src', 'physics_informed_model')
-    
-    nn_dir = os.path.join(pinn_dir, 'neural_networks')
-    if os.path.exists(nn_dir):
-        for f in ['pinn_architecture.py', 'training_manager.py', 'physics_neural_network.py']:
-            src = os.path.join(nn_dir, f)
-            if os.path.exists(src):
-                shutil.move(src, os.path.join(pinn_dir, f))
-                
-    tm_old_dir = os.path.join(base_dir, 'src', 'training_manager')
-    if os.path.exists(tm_old_dir):
-        col_old = os.path.join(tm_old_dir, 'collocation_sampling', 'collocation_sampling.py')
-        col_new_dir = os.path.join(pinn_dir, 'physics_domain')
-        os.makedirs(col_new_dir, exist_ok=True)
-        if os.path.exists(col_old):
-            shutil.move(col_old, os.path.join(col_new_dir, 'collocation_sampling.py'))
-            
-        curriculum_old = os.path.join(tm_old_dir, 'curriculum_training_manager.py')
-        if os.path.exists(curriculum_old):
-            shutil.move(curriculum_old, os.path.join(pinn_dir, 'curriculum_training_manager.py'))
+    u_shape_code = """from src.physics_informed_model.geometry_engine.geometry import Polygon
 
-    dirs_to_remove = [
-        os.path.join(base_dir, 'src', 'ansys_electronic_desktop'),
-        os.path.join(base_dir, 'src', 'training_manager'),
-        os.path.join(pinn_dir, 'neural_networks')
-    ]
-    
-    for d in dirs_to_remove:
-        if os.path.exists(d):
-            shutil.rmtree(d, ignore_errors=True)
+class UShapeMagnetTemplate:
+    def __init__(self, width, height, thickness, air_box_size=5.0, material="magnet"):
+        self.width = width
+        self.height = height
+        self.thickness = thickness
+        self.air_box_size = air_box_size
+        self.material = material
 
+    def build(self):
+        air_box = Polygon().set_material("air").set_vertices([
+            [-self.air_box_size/2, self.air_box_size/2],
+            [self.air_box_size/2, self.air_box_size/2],
+            [self.air_box_size/2, -self.air_box_size/2],
+            [-self.air_box_size/2, -self.air_box_size/2]
+        ])
+        
+        outer_rect = Polygon().set_vertices([
+            [-self.width/2, self.height/2],
+            [self.width/2, self.height/2],
+            [self.width/2, -self.height/2],
+            [-self.width/2, -self.height/2]
+        ])
+        
+        inner_rect = Polygon().set_vertices([
+            [-(self.width/2 - self.thickness), self.height/2],
+            [(self.width/2 - self.thickness), self.height/2],
+            [(self.width/2 - self.thickness), -self.height/2 + self.thickness],
+            [-(self.width/2 - self.thickness), -self.height/2 + self.thickness]
+        ])
+        
+        magnet_u_shape = outer_rect - inner_rect
+        magnet_u_shape.set_material(self.material)
+        
+        air_domain = air_box - magnet_u_shape
+        
+        return air_domain, magnet_u_shape, air_box
+"""
+
+    template_file_path = os.path.join(template_dir, 'u_shape_magnet_template.py')
+    with open(template_file_path, 'w', encoding='utf-8') as f:
+        f.write(u_shape_code)
+        
 if __name__ == "__main__":
-    reorganize_project()
+    generate_u_shape_template()
