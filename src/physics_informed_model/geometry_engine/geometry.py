@@ -1,33 +1,99 @@
 import torch
 from abc import ABC, abstractmethod
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 
 class Geometry(ABC):
-    def __init__(self, material_name=None):
-        self.material_name = material_name
+    def __init__(self):
+        self.material_name = "air"
+        self.nu_0 = 795774.715459
+        
+        self.mu_r = 1.0
+        self.bh_curve_fn = None
+        
+        self.Hc_magnitude = 0.0
+        self.magnetization_fn = None
+        
+        self.J_z = 0.0
+        self.current_density_fn = None
 
-    def set_material(self, material_name):
-        self.material_name = material_name
+    def set_material_properties(
+        self, 
+        name="default", 
+        mu_r=1.0, 
+        bh_curve_fn=None, 
+        Hc_magnitude=0.0, 
+        magnetization_fn=None, 
+        J_z=0.0,
+        current_density_fn=None
+    ):
+        self.material_name = name
+        self.mu_r = mu_r
+        self.bh_curve_fn = bh_curve_fn
+        self.Hc_magnitude = Hc_magnitude
+        self.magnetization_fn = magnetization_fn
+        self.J_z = J_z
+        self.current_density_fn = current_density_fn
         return self
+
+    def get_reluctivity(self, B_squared=None):
+        if self.bh_curve_fn is not None and B_squared is not None:
+            return self.bh_curve_fn(B_squared)
+        return self.nu_0 / self.mu_r
+
+    def get_magnetization(self, xy, mask):
+        if self.Hc_magnitude == 0.0:
+            return torch.zeros_like(mask), torch.zeros_like(mask)
+        
+        if self.magnetization_fn is not None:
+            return self.magnetization_fn(xy, mask, self.Hc_magnitude)
+            
+        H_cx = torch.zeros_like(mask)
+        H_cy = torch.zeros_like(mask)
+        H_cx += self.Hc_magnitude 
+        return H_cx, H_cy
+
+    def get_current_density(self, xy, mask):
+        if self.J_z == 0.0 and self.current_density_fn is None:
+            return torch.zeros_like(mask)
+            
+        if self.current_density_fn is not None:
+            return self.current_density_fn(xy, mask, self.J_z)
+            
+        return torch.ones_like(mask) * self.J_z
 
     @abstractmethod
     def compute_sdf(self, points):
         pass
 
+    @staticmethod
+    def _inherit_properties(target, source):
+        target.set_material_properties(
+            name=source.material_name,
+            mu_r=source.mu_r,
+            bh_curve_fn=source.bh_curve_fn,
+            Hc_magnitude=source.Hc_magnitude,
+            magnetization_fn=source.magnetization_fn,
+            J_z=source.J_z,
+            current_density_fn=source.current_density_fn
+        )
+
     def __or__(self, other):
-        return BooleanUnion(self, other)
+        result = BooleanUnion(self, other)
+        self._inherit_properties(result, self)
+        return result
 
     def __and__(self, other):
-        return BooleanIntersection(self, other)
+        result = BooleanIntersection(self, other)
+        self._inherit_properties(result, self)
+        return result
 
     def __sub__(self, other):
-        return BooleanDifference(self, other)
+        result = BooleanDifference(self, other)
+        self._inherit_properties(result, self)
+        return result
 
 class Polygon(Geometry):
-    def __init__(self, vertices=None, material_name=None):
-        super().__init__(material_name)
+    def __init__(self, vertices=None):
+        super().__init__()
         self.vertices = None
         if vertices is not None:
             self.set_vertices(vertices)
@@ -109,67 +175,3 @@ class BooleanDifference(Geometry):
         sdf1 = self.geom1.compute_sdf(points)
         sdf2 = self.geom2.compute_sdf(points)
         return torch.maximum(sdf1, -sdf2)
-
-def evaluate_generalized_sdf(points, geometry: Geometry):
-    return geometry.compute_sdf(points)
-
-def get_subdomain_material_masks(points, geometry_dict):
-    device = points.device
-    masks = {}
-    for mat_name, geom in geometry_dict.items():
-        sdf_vals = geom.compute_sdf(points)
-        masks[mat_name] = (sdf_vals <= 0).to(torch.float32)
-    return masks
-
-if __name__ == "__main__":
-    def generate_circle_vertices(radius, num_points=64):
-        angles = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
-        return [[radius * np.cos(a), radius * np.sin(a)] for a in angles]
-
-    stator_outer_vertices = generate_circle_vertices(2.0, 64)
-    stator_inner_vertices = generate_circle_vertices(1.2, 64)
-    
-    stator_outer = Polygon().set_material("iron").set_vertices(stator_outer_vertices)
-    stator_bore = Polygon().set_material("air").set_vertices(stator_inner_vertices)
-    
-    stator_core = stator_outer - stator_bore
-
-    slot_1 = Polygon().set_vertices([[-0.2, 2.0], [0.2, 2.0], [0.2, 1.0], [-0.2, 1.0]])
-    slot_2 = Polygon().set_vertices([[-0.2, -2.0], [0.2, -2.0], [0.2, -1.0], [-0.2, -1.0]])
-    slot_3 = Polygon().set_vertices([[1.0, -0.2], [2.0, -0.2], [2.0, 0.2], [1.0, 0.2]])
-    slot_4 = Polygon().set_vertices([[-2.0, -0.2], [-1.0, -0.2], [-1.0, 0.2], [-2.0, 0.2]])
-    
-    all_slots = slot_1 | slot_2 | slot_3 | slot_4
-
-    complex_stator = stator_core - all_slots
-
-    resolution = 350
-    x = np.linspace(-2.5, 2.5, resolution)
-    y = np.linspace(-2.5, 2.5, resolution)
-    X, Y = np.meshgrid(x, y)
-    
-    xy_np = np.column_stack((X.ravel(), Y.ravel()))
-    test_points = torch.tensor(xy_np, dtype=torch.float32)
-
-    sdf_machine = evaluate_generalized_sdf(test_points, complex_stator)
-    SDF_grid = sdf_machine.numpy().reshape(resolution, resolution)
-
-    plt.figure(figsize=(7, 6))
-    
-    vmin = SDF_grid.min()
-    vmax = SDF_grid.max()
-    levels = np.linspace(vmin, vmax, 60)
-    
-    cmap = mcolors.LinearSegmentedColormap.from_list("custom_red_white_blue", ["red", "white", "blue"])
-    norm = mcolors.TwoSlopeNorm(vmin=vmin if vmin < 0 else -1e-5, vcenter=0.0, vmax=vmax if vmax > 0 else 1e-5)
-    
-    contour = plt.contourf(X, Y, SDF_grid, levels=levels, cmap=cmap, norm=norm)
-    plt.contour(X, Y, SDF_grid, levels=[0.0], colors="black", linewidths=2.5)
-    
-    plt.title("Generalized SDF: Complex Stator (Red < 0, White = 0, Blue > 0)")
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.axis("equal")
-    plt.colorbar(contour, label="Distance")
-    plt.tight_layout()
-    plt.show()
