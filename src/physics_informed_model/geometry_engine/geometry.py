@@ -4,174 +4,174 @@ from abc import ABC, abstractmethod
 class Geometry(ABC):
     def __init__(self):
         self.material_name = "air"
-        self.nu_0 = 795774.715459
+        self.vacuum_reluctivity = 795774.715459
         
-        self.mu_r = 1.0
-        self.bh_curve_fn = None
+        self.relative_permeability = 1.0
+        self.magnetic_curve_function = None
         
-        self.Hc_magnitude = 0.0
-        self.magnetization_fn = None
+        self.coercive_field_magnitude = 0.0
+        self.magnetization_function = None
         
-        self.J_z = 0.0
-        self.current_density_fn = None
+        self.current_density_z_axis = 0.0
+        self.current_density_function = None
 
     def set_material_properties(
         self, 
         name="default", 
-        mu_r=1.0, 
-        bh_curve_fn=None, 
-        Hc_magnitude=0.0, 
-        magnetization_fn=None, 
-        J_z=0.0,
-        current_density_fn=None
+        relative_permeability=1.0, 
+        magnetic_curve_function=None, 
+        coercive_field_magnitude=0.0, 
+        magnetization_function=None, 
+        current_density_z_axis=0.0,
+        current_density_function=None
     ):
         self.material_name = name
-        self.mu_r = mu_r
-        self.bh_curve_fn = bh_curve_fn
-        self.Hc_magnitude = Hc_magnitude
-        self.magnetization_fn = magnetization_fn
-        self.J_z = J_z
-        self.current_density_fn = current_density_fn
+        self.relative_permeability = relative_permeability
+        self.magnetic_curve_function = magnetic_curve_function
+        self.coercive_field_magnitude = coercive_field_magnitude
+        self.magnetization_function = magnetization_function
+        self.current_density_z_axis = current_density_z_axis
+        self.current_density_function = current_density_function
         return self
 
-    def get_reluctivity(self, B_squared=None):
-        if self.bh_curve_fn is not None and B_squared is not None:
-            return self.bh_curve_fn(B_squared)
-        return self.nu_0 / self.mu_r
+    def get_reluctivity(self, magnetic_flux_density_squared=None):
+        if self.magnetic_curve_function is not None and magnetic_flux_density_squared is not None:
+            return self.magnetic_curve_function(magnetic_flux_density_squared)
+        return self.vacuum_reluctivity / self.relative_permeability
 
-    def get_magnetization(self, xy, mask):
-        if self.Hc_magnitude == 0.0:
-            return torch.zeros_like(mask), torch.zeros_like(mask)
+    def get_magnetization(self, coordinates, mask_tensor):
+        if self.coercive_field_magnitude == 0.0:
+            return torch.zeros_like(mask_tensor), torch.zeros_like(mask_tensor)
         
-        if self.magnetization_fn is not None:
-            return self.magnetization_fn(xy, mask, self.Hc_magnitude)
+        if self.magnetization_function is not None:
+            return self.magnetization_function(coordinates, mask_tensor, self.coercive_field_magnitude)
             
-        H_cx = torch.zeros_like(mask)
-        H_cy = torch.zeros_like(mask)
-        H_cx += self.Hc_magnitude 
-        return H_cx, H_cy
+        coercive_field_x_axis = torch.zeros_like(mask_tensor)
+        coercive_field_y_axis = torch.zeros_like(mask_tensor)
+        coercive_field_x_axis += self.coercive_field_magnitude 
+        return coercive_field_x_axis, coercive_field_y_axis
 
-    def get_current_density(self, xy, mask):
-        if self.J_z == 0.0 and self.current_density_fn is None:
-            return torch.zeros_like(mask)
+    def get_current_density(self, coordinates, mask_tensor):
+        if self.current_density_z_axis == 0.0 and self.current_density_function is None:
+            return torch.zeros_like(mask_tensor)
             
-        if self.current_density_fn is not None:
-            return self.current_density_fn(xy, mask, self.J_z)
+        if self.current_density_function is not None:
+            return self.current_density_function(coordinates, mask_tensor, self.current_density_z_axis)
             
-        return torch.ones_like(mask) * self.J_z
+        return torch.ones_like(mask_tensor) * self.current_density_z_axis
 
     @abstractmethod
-    def compute_sdf(self, points):
+    def compute_signed_distance_field(self, points_tensor):
         pass
 
     @staticmethod
-    def _inherit_properties(target, source):
-        target.set_material_properties(
-            name=source.material_name,
-            mu_r=source.mu_r,
-            bh_curve_fn=source.bh_curve_fn,
-            Hc_magnitude=source.Hc_magnitude,
-            magnetization_fn=source.magnetization_fn,
-            J_z=source.J_z,
-            current_density_fn=source.current_density_fn
+    def _inherit_properties(target_geometry, source_geometry):
+        target_geometry.set_material_properties(
+            name=source_geometry.material_name,
+            relative_permeability=source_geometry.relative_permeability,
+            magnetic_curve_function=source_geometry.magnetic_curve_function,
+            coercive_field_magnitude=source_geometry.coercive_field_magnitude,
+            magnetization_function=source_geometry.magnetization_function,
+            current_density_z_axis=source_geometry.current_density_z_axis,
+            current_density_function=source_geometry.current_density_function
         )
 
-    def __or__(self, other):
-        result = BooleanUnion(self, other)
-        self._inherit_properties(result, self)
-        return result
+    def __or__(self, other_geometry):
+        result_geometry = BooleanUnion(self, other_geometry)
+        self._inherit_properties(result_geometry, self)
+        return result_geometry
 
-    def __and__(self, other):
-        result = BooleanIntersection(self, other)
-        self._inherit_properties(result, self)
-        return result
+    def __and__(self, other_geometry):
+        result_geometry = BooleanIntersection(self, other_geometry)
+        self._inherit_properties(result_geometry, self)
+        return result_geometry
 
-    def __sub__(self, other):
-        result = BooleanDifference(self, other)
-        self._inherit_properties(result, self)
-        return result
+    def __sub__(self, other_geometry):
+        result_geometry = BooleanDifference(self, other_geometry)
+        self._inherit_properties(result_geometry, self)
+        return result_geometry
 
 class Polygon(Geometry):
-    def __init__(self, vertices=None):
+    def __init__(self, vertices_list=None):
         super().__init__()
-        self.vertices = None
-        if vertices is not None:
-            self.set_vertices(vertices)
+        self.vertices_tensor = None
+        if vertices_list is not None:
+            self.set_vertices(vertices_list)
 
-    def set_vertices(self, vertices):
-        self.vertices = torch.tensor(vertices, dtype=torch.float32)
+    def set_vertices(self, vertices_list):
+        self.vertices_tensor = torch.tensor(vertices_list, dtype=torch.float32)
         return self
 
-    def compute_sdf(self, points):
-        if self.vertices is None:
-            raise ValueError("Polygon vertices must be set before computing SDF.")
+    def compute_signed_distance_field(self, points_tensor):
+        if self.vertices_tensor is None:
+            raise ValueError("Polygon vertices must be set before computing signed distance field.")
             
-        device = points.device
-        V = self.vertices.to(device)
+        computation_device = points_tensor.device
+        vertices_on_device = self.vertices_tensor.to(computation_device)
         
-        A = V
-        B = torch.roll(V, shifts=-1, dims=0)
+        start_points = vertices_on_device
+        end_points = torch.roll(vertices_on_device, shifts=-1, dims=0)
         
-        AB = B - A
-        AP = points.unsqueeze(1) - A.unsqueeze(0)
+        edge_vectors = end_points - start_points
+        point_to_start_vectors = points_tensor.unsqueeze(1) - start_points.unsqueeze(0)
         
-        dot_AP_AB = torch.sum(AP * AB.unsqueeze(0), dim=2)
-        dot_AB_AB = torch.sum(AB * AB, dim=1).unsqueeze(0)
-        t = dot_AP_AB / dot_AB_AB
-        t_clamped = torch.clamp(t, min=0.0, max=1.0)
+        dot_product_point_to_start_and_edge = torch.sum(point_to_start_vectors * edge_vectors.unsqueeze(0), dim=2)
+        dot_product_edge_and_edge = torch.sum(edge_vectors * edge_vectors, dim=1).unsqueeze(0)
+        projection_parameter = dot_product_point_to_start_and_edge / dot_product_edge_and_edge
+        clamped_projection_parameter = torch.clamp(projection_parameter, min=0.0, max=1.0)
         
-        closest_points = A.unsqueeze(0) + t_clamped.unsqueeze(-1) * AB.unsqueeze(0)
-        distances = torch.norm(points.unsqueeze(1) - closest_points, dim=2)
-        min_distances, _ = torch.min(distances, dim=1)
+        closest_points = start_points.unsqueeze(0) + clamped_projection_parameter.unsqueeze(-1) * edge_vectors.unsqueeze(0)
+        distances_to_edges = torch.norm(points_tensor.unsqueeze(1) - closest_points, dim=2)
+        minimum_distances, _ = torch.min(distances_to_edges, dim=1)
         
-        Px = points[:, 0].unsqueeze(1)
-        Py = points[:, 1].unsqueeze(1)
-        Ax = A[:, 0].unsqueeze(0)
-        Ay = A[:, 1].unsqueeze(0)
-        Bx = B[:, 0].unsqueeze(0)
-        By = B[:, 1].unsqueeze(0)
+        points_x_coordinates = points_tensor[:, 0].unsqueeze(1)
+        points_y_coordinates = points_tensor[:, 1].unsqueeze(1)
+        start_points_x_coordinates = start_points[:, 0].unsqueeze(0)
+        start_points_y_coordinates = start_points[:, 1].unsqueeze(0)
+        end_points_x_coordinates = end_points[:, 0].unsqueeze(0)
+        end_points_y_coordinates = end_points[:, 1].unsqueeze(0)
         
-        cond1 = (Ay <= Py) & (Py < By)
-        cond2 = (By <= Py) & (Py < Ay)
-        valid_y = cond1 | cond2
+        condition_y_between_start_and_end = (start_points_y_coordinates <= points_y_coordinates) & (points_y_coordinates < end_points_y_coordinates)
+        condition_y_between_end_and_start = (end_points_y_coordinates <= points_y_coordinates) & (points_y_coordinates < start_points_y_coordinates)
+        valid_y_intersection = condition_y_between_start_and_end | condition_y_between_end_and_start
         
-        intersect_x = Ax + (Py - Ay) * (Bx - Ax) / (By - Ay)
-        crossings = valid_y & (Px < intersect_x)
+        intersection_x_coordinates = start_points_x_coordinates + (points_y_coordinates - start_points_y_coordinates) * (end_points_x_coordinates - start_points_x_coordinates) / (end_points_y_coordinates - start_points_y_coordinates)
+        ray_crossings = valid_y_intersection & (points_x_coordinates < intersection_x_coordinates)
         
-        inside = crossings.sum(dim=1) % 2 == 1
-        sign = torch.where(inside, -1.0, 1.0)
+        is_point_inside = ray_crossings.sum(dim=1) % 2 == 1
+        distance_sign = torch.where(is_point_inside, -1.0, 1.0)
         
-        return sign * min_distances
+        return distance_sign * minimum_distances
 
 class BooleanUnion(Geometry):
-    def __init__(self, geom1, geom2):
+    def __init__(self, geometry_one, geometry_two):
         super().__init__()
-        self.geom1 = geom1
-        self.geom2 = geom2
+        self.geometry_one = geometry_one
+        self.geometry_two = geometry_two
 
-    def compute_sdf(self, points):
-        sdf1 = self.geom1.compute_sdf(points)
-        sdf2 = self.geom2.compute_sdf(points)
-        return torch.minimum(sdf1, sdf2)
+    def compute_signed_distance_field(self, points_tensor):
+        signed_distance_field_one = self.geometry_one.compute_signed_distance_field(points_tensor)
+        signed_distance_field_two = self.geometry_two.compute_signed_distance_field(points_tensor)
+        return torch.minimum(signed_distance_field_one, signed_distance_field_two)
 
 class BooleanIntersection(Geometry):
-    def __init__(self, geom1, geom2):
+    def __init__(self, geometry_one, geometry_two):
         super().__init__()
-        self.geom1 = geom1
-        self.geom2 = geom2
+        self.geometry_one = geometry_one
+        self.geometry_two = geometry_two
 
-    def compute_sdf(self, points):
-        sdf1 = self.geom1.compute_sdf(points)
-        sdf2 = self.geom2.compute_sdf(points)
-        return torch.maximum(sdf1, sdf2)
+    def compute_signed_distance_field(self, points_tensor):
+        signed_distance_field_one = self.geometry_one.compute_signed_distance_field(points_tensor)
+        signed_distance_field_two = self.geometry_two.compute_signed_distance_field(points_tensor)
+        return torch.maximum(signed_distance_field_one, signed_distance_field_two)
 
 class BooleanDifference(Geometry):
-    def __init__(self, geom1, geom2):
+    def __init__(self, geometry_one, geometry_two):
         super().__init__()
-        self.geom1 = geom1
-        self.geom2 = geom2
+        self.geometry_one = geometry_one
+        self.geometry_two = geometry_two
 
-    def compute_sdf(self, points):
-        sdf1 = self.geom1.compute_sdf(points)
-        sdf2 = self.geom2.compute_sdf(points)
-        return torch.maximum(sdf1, -sdf2)
+    def compute_signed_distance_field(self, points_tensor):
+        signed_distance_field_one = self.geometry_one.compute_signed_distance_field(points_tensor)
+        signed_distance_field_two = self.geometry_two.compute_signed_distance_field(points_tensor)
+        return torch.maximum(signed_distance_field_one, -signed_distance_field_two)
