@@ -1,7 +1,7 @@
 import torch
 from abc import ABC, abstractmethod
 
-class Geometry(ABC):
+class Segment(ABC):
     def __init__(self):
         self.material_name = "air"
         self.vacuum_reluctivity = 795774.715459
@@ -34,66 +34,12 @@ class Geometry(ABC):
         self.current_density_function = current_density_function
         return self
 
-    def get_reluctivity(self, magnetic_flux_density_squared=None):
-        if self.magnetic_curve_function is not None and magnetic_flux_density_squared is not None:
-            return self.magnetic_curve_function(magnetic_flux_density_squared)
-        return self.vacuum_reluctivity / self.relative_permeability
-
-    def get_magnetization(self, coordinates, mask_tensor):
-        if self.coercive_field_magnitude == 0.0:
-            return torch.zeros_like(mask_tensor, dtype=torch.float32), torch.zeros_like(mask_tensor, dtype=torch.float32)
-        
-        if self.magnetization_function is not None:
-            return self.magnetization_function(coordinates, mask_tensor, self.coercive_field_magnitude)
-            
-        coercive_field_x_axis = torch.zeros_like(mask_tensor, dtype=torch.float32)
-        coercive_field_y_axis = torch.zeros_like(mask_tensor, dtype=torch.float32)
-        coercive_field_x_axis[mask_tensor] = self.coercive_field_magnitude 
-        return coercive_field_x_axis, coercive_field_y_axis
-
-    def get_current_density(self, coordinates, mask_tensor):
-        if self.current_density_z_axis == 0.0 and self.current_density_function is None:
-            return torch.zeros_like(mask_tensor, dtype=torch.float32)
-            
-        if self.current_density_function is not None:
-            return self.current_density_function(coordinates, mask_tensor, self.current_density_z_axis)
-            
-        current_density_tensor = torch.zeros_like(mask_tensor, dtype=torch.float32)
-        current_density_tensor[mask_tensor] = self.current_density_z_axis
-        return current_density_tensor
-
     @abstractmethod
     def compute_signed_distance_field(self, points_tensor):
         pass
 
-    @staticmethod
-    def _inherit_properties(target_geometry, source_geometry):
-        target_geometry.set_material_properties(
-            name=source_geometry.material_name,
-            relative_permeability=source_geometry.relative_permeability,
-            magnetic_curve_function=source_geometry.magnetic_curve_function,
-            coercive_field_magnitude=source_geometry.coercive_field_magnitude,
-            magnetization_function=source_geometry.magnetization_function,
-            current_density_z_axis=source_geometry.current_density_z_axis,
-            current_density_function=source_geometry.current_density_function
-        )
 
-    def __or__(self, other_geometry):
-        result_geometry = BooleanUnion(self, other_geometry)
-        self._inherit_properties(result_geometry, self)
-        return result_geometry
-
-    def __and__(self, other_geometry):
-        result_geometry = BooleanIntersection(self, other_geometry)
-        self._inherit_properties(result_geometry, self)
-        return result_geometry
-
-    def __sub__(self, other_geometry):
-        result_geometry = BooleanDifference(self, other_geometry)
-        self._inherit_properties(result_geometry, self)
-        return result_geometry
-
-class Polygon(Geometry):
+class PolygonSegment(Segment):
     def __init__(self, vertices_list=None):
         super().__init__()
         self.vertices_tensor = None
@@ -106,7 +52,7 @@ class Polygon(Geometry):
 
     def compute_signed_distance_field(self, points_tensor):
         if self.vertices_tensor is None:
-            raise ValueError("Polygon vertices must be set before computing signed distance field.")
+            raise ValueError("PolygonSegment vertices must be set before computing signed distance field.")
             
         computation_device = points_tensor.device
         computation_dtype = points_tensor.dtype
@@ -167,38 +113,62 @@ class Polygon(Geometry):
         
         return distance_sign * minimum_distances
 
-class BooleanUnion(Geometry):
-    def __init__(self, geometry_one, geometry_two):
-        super().__init__()
-        self.geometry_one = geometry_one
-        self.geometry_two = geometry_two
 
-    def compute_signed_distance_field(self, points_tensor):
-        signed_distance_field_one = self.geometry_one.compute_signed_distance_field(points_tensor)
-        signed_distance_field_two = self.geometry_two.compute_signed_distance_field(points_tensor)
-        return torch.minimum(signed_distance_field_one, signed_distance_field_two)
+class Geometry:
+    def __init__(self):
+        self.segments_list = []
+        self.vacuum_reluctivity = 795774.715459
 
-class BooleanIntersection(Geometry):
-    def __init__(self, geometry_one, geometry_two):
-        super().__init__()
-        self.geometry_one = geometry_one
-        self.geometry_two = geometry_two
+    def add_segment(self, segment_object):
+        self.segments_list.append(segment_object)
+        return self
 
-    def compute_signed_distance_field(self, points_tensor):
-        signed_distance_field_one = self.geometry_one.compute_signed_distance_field(points_tensor)
-        signed_distance_field_two = self.geometry_two.compute_signed_distance_field(points_tensor)
-        return torch.maximum(signed_distance_field_one, signed_distance_field_two)
+    def compute_global_signed_distance_field(self, points_tensor):
+        if not self.segments_list:
+            return torch.ones((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
+            
+        global_signed_distance_field = self.segments_list[0].compute_signed_distance_field(points_tensor)
+        
+        for segment_object in self.segments_list[1:]:
+            current_signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
+            global_signed_distance_field = torch.minimum(global_signed_distance_field, current_signed_distance_field)
+            
+        return global_signed_distance_field
 
-class BooleanDifference(Geometry):
-    def __init__(self, geometry_one, geometry_two):
-        super().__init__()
-        self.geometry_one = geometry_one
-        self.geometry_two = geometry_two
+    def evaluate_global_physical_properties(self, points_tensor):
+        number_of_points = points_tensor.shape[0]
+        computation_device = points_tensor.device
+        
+        global_relative_permeability_tensor = torch.ones((number_of_points, 1), dtype=torch.float32, device=computation_device)
+        global_coercive_field_x_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
+        global_coercive_field_y_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
+        global_current_density_z_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
+        global_material_classification_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
 
-    def compute_signed_distance_field(self, points_tensor):
-        signed_distance_field_one = self.geometry_one.compute_signed_distance_field(points_tensor)
-        signed_distance_field_two = self.geometry_two.compute_signed_distance_field(points_tensor)
-        return torch.maximum(signed_distance_field_one, -signed_distance_field_two)
+        material_index_counter = 1.0
+
+        for segment_object in self.segments_list:
+            signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
+            mask_tensor = signed_distance_field <= 0.0
+            
+            if mask_tensor.any():
+                global_relative_permeability_tensor[mask_tensor] = segment_object.relative_permeability
+                global_current_density_z_tensor[mask_tensor] = segment_object.current_density_z_axis
+                global_coercive_field_x_tensor[mask_tensor] = segment_object.coercive_field_magnitude
+                global_material_classification_tensor[mask_tensor] = material_index_counter
+            
+            material_index_counter += 1.0
+
+        global_reluctivity_tensor = self.vacuum_reluctivity / global_relative_permeability_tensor
+
+        return {
+            "reluctivity": global_reluctivity_tensor,
+            "relative_permeability": global_relative_permeability_tensor,
+            "coercive_field_x": global_coercive_field_x_tensor,
+            "coercive_field_y": global_coercive_field_y_tensor,
+            "current_density_z": global_current_density_z_tensor,
+            "material_classification": global_material_classification_tensor
+        }
 
 if __name__ == "__main__":
     import numpy
@@ -215,13 +185,13 @@ if __name__ == "__main__":
         ]
 
     square_iron_vertices_list = [[-2.0, 1.0], [-1.0, 1.0], [-1.0, 0.0], [-2.0, 0.0]]
-    square_iron_polygon = Polygon().set_vertices(square_iron_vertices_list).set_material_properties(
+    square_iron_segment = PolygonSegment().set_vertices(square_iron_vertices_list).set_material_properties(
         name="iron",
         relative_permeability=1000.0
     )
 
     square_magnet_vertices_list = [[1.0, 1.0], [2.0, 1.0], [2.0, 0.0], [1.0, 0.0]]
-    square_magnet_polygon = Polygon().set_vertices(square_magnet_vertices_list).set_material_properties(
+    square_magnet_segment = PolygonSegment().set_vertices(square_magnet_vertices_list).set_material_properties(
         name="magnet",
         relative_permeability=1.05,
         coercive_field_magnitude=800000.0
@@ -233,13 +203,16 @@ if __name__ == "__main__":
         center_y_coordinate=-1.0, 
         number_of_points=64
     )
-    circular_wire_polygon = Polygon().set_vertices(circular_wire_vertices_list).set_material_properties(
+    circular_wire_segment = PolygonSegment().set_vertices(circular_wire_vertices_list).set_material_properties(
         name="copper_wire",
         relative_permeability=1.0,
         current_density_z_axis=5000000.0
     )
 
-    combined_test_geometry = square_iron_polygon | square_magnet_polygon | circular_wire_polygon
+    computational_domain_geometry = Geometry()
+    computational_domain_geometry.add_segment(square_iron_segment)
+    computational_domain_geometry.add_segment(square_magnet_segment)
+    computational_domain_geometry.add_segment(circular_wire_segment)
 
     spatial_resolution_value = 250
     x_coordinates_array = numpy.linspace(-3.0, 3.0, spatial_resolution_value)
@@ -249,35 +222,15 @@ if __name__ == "__main__":
     coordinates_numpy_array = numpy.column_stack((x_mesh_grid_array.ravel(), y_mesh_grid_array.ravel()))
     test_points_tensor = torch.tensor(coordinates_numpy_array, dtype=torch.float32)
 
-    signed_distance_field_tensor_iron = square_iron_polygon.compute_signed_distance_field(test_points_tensor)
-    signed_distance_field_tensor_magnet = square_magnet_polygon.compute_signed_distance_field(test_points_tensor)
-    signed_distance_field_tensor_wire = circular_wire_polygon.compute_signed_distance_field(test_points_tensor)
-    signed_distance_field_tensor_combined = combined_test_geometry.compute_signed_distance_field(test_points_tensor)
+    global_signed_distance_field_tensor = computational_domain_geometry.compute_global_signed_distance_field(test_points_tensor)
+    physical_properties_dictionary = computational_domain_geometry.evaluate_global_physical_properties(test_points_tensor)
 
-    mask_tensor_iron = signed_distance_field_tensor_iron <= 0.0
-    mask_tensor_magnet = signed_distance_field_tensor_magnet <= 0.0
-    mask_tensor_wire = signed_distance_field_tensor_wire <= 0.0
-
-    material_classification_tensor = torch.zeros_like(signed_distance_field_tensor_combined)
-    material_classification_tensor[mask_tensor_iron] = 1.0
-    material_classification_tensor[mask_tensor_magnet] = 2.0
-    material_classification_tensor[mask_tensor_wire] = 3.0
-
-    relative_permeability_tensor = torch.ones_like(signed_distance_field_tensor_combined)
-    relative_permeability_tensor[mask_tensor_iron] = square_iron_polygon.relative_permeability
-    relative_permeability_tensor[mask_tensor_magnet] = square_magnet_polygon.relative_permeability
-    relative_permeability_tensor[mask_tensor_wire] = circular_wire_polygon.relative_permeability
-
-    coercive_field_x_tensor, coercive_field_y_tensor = square_magnet_polygon.get_magnetization(test_points_tensor, mask_tensor_magnet)
-    
-    current_density_z_tensor = circular_wire_polygon.get_current_density(test_points_tensor, mask_tensor_wire)
-
-    signed_distance_field_grid_array = signed_distance_field_tensor_combined.numpy().reshape(spatial_resolution_value, spatial_resolution_value)
-    material_classification_grid_array = material_classification_tensor.numpy().reshape(spatial_resolution_value, spatial_resolution_value)
-    relative_permeability_grid_array = relative_permeability_tensor.numpy().reshape(spatial_resolution_value, spatial_resolution_value)
-    coercive_field_x_grid_array = coercive_field_x_tensor.numpy().reshape(spatial_resolution_value, spatial_resolution_value)
-    coercive_field_y_grid_array = coercive_field_y_tensor.numpy().reshape(spatial_resolution_value, spatial_resolution_value)
-    current_density_z_grid_array = current_density_z_tensor.numpy().reshape(spatial_resolution_value, spatial_resolution_value)
+    signed_distance_field_grid_array = global_signed_distance_field_tensor.numpy().reshape(spatial_resolution_value, spatial_resolution_value)
+    material_classification_grid_array = physical_properties_dictionary["material_classification"].numpy().reshape(spatial_resolution_value, spatial_resolution_value)
+    relative_permeability_grid_array = physical_properties_dictionary["relative_permeability"].numpy().reshape(spatial_resolution_value, spatial_resolution_value)
+    coercive_field_x_grid_array = physical_properties_dictionary["coercive_field_x"].numpy().reshape(spatial_resolution_value, spatial_resolution_value)
+    coercive_field_y_grid_array = physical_properties_dictionary["coercive_field_y"].numpy().reshape(spatial_resolution_value, spatial_resolution_value)
+    current_density_z_grid_array = physical_properties_dictionary["current_density_z"].numpy().reshape(spatial_resolution_value, spatial_resolution_value)
 
     figure_object, axes_array = matplotlib.pyplot.subplots(nrows=2, ncols=3, figsize=(18, 12))
     
@@ -293,7 +246,7 @@ if __name__ == "__main__":
         levels=60, cmap=color_map_signed_distance_field, norm=two_slope_normalization_object
     )
     axes_array[0, 0].contour(x_mesh_grid_array, y_mesh_grid_array, signed_distance_field_grid_array, levels=[0.0], colors="black", linewidths=1.5)
-    axes_array[0, 0].set_title("Combined Signed Distance Field")
+    axes_array[0, 0].set_title("Global Signed Distance Field")
     axes_array[0, 0].set_aspect("equal")
     figure_object.colorbar(contour_plot_signed_distance_field, ax=axes_array[0, 0], label="Distance (m)")
 
