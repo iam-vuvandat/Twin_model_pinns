@@ -197,3 +197,84 @@ class BooleanDifference(Geometry):
         signed_distance_field_one = self.geometry_one.compute_signed_distance_field(points_tensor)
         signed_distance_field_two = self.geometry_two.compute_signed_distance_field(points_tensor)
         return torch.maximum(signed_distance_field_one, -signed_distance_field_two)
+
+if __name__ == "__main__":
+    import numpy
+    import matplotlib.pyplot
+    import matplotlib.colors
+
+    def generate_circle_vertices_list(radius_value, number_of_points=64):
+        angles_array = numpy.linspace(0, 2 * numpy.pi, number_of_points, endpoint=False)
+        return [[radius_value * numpy.cos(angle), radius_value * numpy.sin(angle)] for angle in angles_array]
+
+    stator_outer_vertices_list = generate_circle_vertices_list(2.0, 64)
+    stator_inner_vertices_list = generate_circle_vertices_list(1.2, 64)
+    
+    stator_outer_polygon = Polygon().set_vertices(stator_outer_vertices_list).set_material_properties(
+        name="iron",
+        relative_permeability=1000.0
+    )
+    stator_bore_polygon = Polygon().set_vertices(stator_inner_vertices_list).set_material_properties(
+        name="air"
+    )
+    
+    stator_core_geometry = stator_outer_polygon - stator_bore_polygon
+
+    magnet_vertices_list = [[-0.5, 1.2], [0.5, 1.2], [0.5, 1.6], [-0.5, 1.6]]
+    magnet_polygon = Polygon().set_vertices(magnet_vertices_list).set_material_properties(
+        name="magnet",
+        relative_permeability=1.05,
+        coercive_field_magnitude=800000.0
+    )
+    
+    combined_machine_geometry = stator_core_geometry | magnet_polygon
+
+    spatial_resolution_value = 250
+    x_coordinates_array = numpy.linspace(-2.5, 2.5, spatial_resolution_value)
+    y_coordinates_array = numpy.linspace(-2.5, 2.5, spatial_resolution_value)
+    x_mesh_grid_array, y_mesh_grid_array = numpy.meshgrid(x_coordinates_array, y_coordinates_array)
+    
+    coordinates_numpy_array = numpy.column_stack((x_mesh_grid_array.ravel(), y_mesh_grid_array.ravel()))
+    test_points_tensor = torch.tensor(coordinates_numpy_array, dtype=torch.float32)
+
+    signed_distance_field_tensor = combined_machine_geometry.compute_signed_distance_field(test_points_tensor)
+    signed_distance_field_grid_array = signed_distance_field_tensor.numpy().reshape(spatial_resolution_value, spatial_resolution_value)
+
+    matplotlib.pyplot.figure(figsize=(7, 6))
+    
+    minimum_distance_value = signed_distance_field_grid_array.min()
+    maximum_distance_value = signed_distance_field_grid_array.max()
+    contour_levels_array = numpy.linspace(minimum_distance_value, maximum_distance_value, 60)
+    
+    color_map_object = matplotlib.colors.LinearSegmentedColormap.from_list("custom_red_white_blue", ["red", "white", "blue"])
+    two_slope_normalization_object = matplotlib.colors.TwoSlopeNorm(
+        vmin=minimum_distance_value if minimum_distance_value < 0 else -1e-5, 
+        vcenter=0.0, 
+        vmax=maximum_distance_value if maximum_distance_value > 0 else 1e-5
+    )
+    
+    contour_plot_object = matplotlib.pyplot.contourf(
+        x_mesh_grid_array, 
+        y_mesh_grid_array, 
+        signed_distance_field_grid_array, 
+        levels=contour_levels_array, 
+        cmap=color_map_object, 
+        norm=two_slope_normalization_object
+    )
+    
+    matplotlib.pyplot.contour(
+        x_mesh_grid_array, 
+        y_mesh_grid_array, 
+        signed_distance_field_grid_array, 
+        levels=[0.0], 
+        colors="black", 
+        linewidths=2.0
+    )
+    
+    matplotlib.pyplot.title("Generalized Signed Distance Field: Stator and Magnet")
+    matplotlib.pyplot.xlabel("x_coordinate")
+    matplotlib.pyplot.ylabel("y_coordinate")
+    matplotlib.pyplot.axis("equal")
+    matplotlib.pyplot.colorbar(contour_plot_object, label="Signed Distance")
+    matplotlib.pyplot.tight_layout()
+    matplotlib.pyplot.show()

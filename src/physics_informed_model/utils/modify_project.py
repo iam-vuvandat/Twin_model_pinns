@@ -213,44 +213,54 @@ if __name__ == "__main__":
     import matplotlib.pyplot
     import matplotlib.colors
 
-    def generate_circle_vertices_list(radius_value, number_of_points=64):
+    def generate_shifted_circle_vertices_list(radius_value, center_x_coordinate, center_y_coordinate, number_of_points=64):
         angles_array = numpy.linspace(0, 2 * numpy.pi, number_of_points, endpoint=False)
-        return [[radius_value * numpy.cos(angle), radius_value * numpy.sin(angle)] for angle in angles_array]
+        return [
+            [
+                center_x_coordinate + radius_value * numpy.cos(angle), 
+                center_y_coordinate + radius_value * numpy.sin(angle)
+            ] for angle in angles_array
+        ]
 
-    stator_outer_vertices_list = generate_circle_vertices_list(2.0, 64)
-    stator_inner_vertices_list = generate_circle_vertices_list(1.2, 64)
-    
-    stator_outer_polygon = Polygon().set_vertices(stator_outer_vertices_list).set_material_properties(
+    square_iron_vertices_list = [[-2.0, 1.0], [-1.0, 1.0], [-1.0, 0.0], [-2.0, 0.0]]
+    square_iron_polygon = Polygon().set_vertices(square_iron_vertices_list).set_material_properties(
         name="iron",
         relative_permeability=1000.0
     )
-    stator_bore_polygon = Polygon().set_vertices(stator_inner_vertices_list).set_material_properties(
-        name="air"
-    )
-    
-    stator_core_geometry = stator_outer_polygon - stator_bore_polygon
 
-    magnet_vertices_list = [[-0.5, 1.2], [0.5, 1.2], [0.5, 1.6], [-0.5, 1.6]]
-    magnet_polygon = Polygon().set_vertices(magnet_vertices_list).set_material_properties(
+    square_magnet_vertices_list = [[1.0, 1.0], [2.0, 1.0], [2.0, 0.0], [1.0, 0.0]]
+    square_magnet_polygon = Polygon().set_vertices(square_magnet_vertices_list).set_material_properties(
         name="magnet",
         relative_permeability=1.05,
         coercive_field_magnitude=800000.0
     )
-    
-    combined_machine_geometry = stator_core_geometry | magnet_polygon
+
+    circular_wire_vertices_list = generate_shifted_circle_vertices_list(
+        radius_value=0.5, 
+        center_x_coordinate=0.0, 
+        center_y_coordinate=-1.0, 
+        number_of_points=64
+    )
+    circular_wire_polygon = Polygon().set_vertices(circular_wire_vertices_list).set_material_properties(
+        name="copper_wire",
+        relative_permeability=1.0,
+        current_density_z_axis=5000000.0
+    )
+
+    combined_test_geometry = square_iron_polygon | square_magnet_polygon | circular_wire_polygon
 
     spatial_resolution_value = 250
-    x_coordinates_array = numpy.linspace(-2.5, 2.5, spatial_resolution_value)
-    y_coordinates_array = numpy.linspace(-2.5, 2.5, spatial_resolution_value)
+    x_coordinates_array = numpy.linspace(-3.0, 3.0, spatial_resolution_value)
+    y_coordinates_array = numpy.linspace(-3.0, 3.0, spatial_resolution_value)
     x_mesh_grid_array, y_mesh_grid_array = numpy.meshgrid(x_coordinates_array, y_coordinates_array)
     
     coordinates_numpy_array = numpy.column_stack((x_mesh_grid_array.ravel(), y_mesh_grid_array.ravel()))
     test_points_tensor = torch.tensor(coordinates_numpy_array, dtype=torch.float32)
 
-    signed_distance_field_tensor = combined_machine_geometry.compute_signed_distance_field(test_points_tensor)
+    signed_distance_field_tensor = combined_test_geometry.compute_signed_distance_field(test_points_tensor)
     signed_distance_field_grid_array = signed_distance_field_tensor.numpy().reshape(spatial_resolution_value, spatial_resolution_value)
 
-    matplotlib.pyplot.figure(figsize=(7, 6))
+    matplotlib.pyplot.figure(figsize=(8, 7))
     
     minimum_distance_value = signed_distance_field_grid_array.min()
     maximum_distance_value = signed_distance_field_grid_array.max()
@@ -281,7 +291,7 @@ if __name__ == "__main__":
         linewidths=2.0
     )
     
-    matplotlib.pyplot.title("Generalized Signed Distance Field: Stator and Magnet")
+    matplotlib.pyplot.title("Generalized Signed Distance Field: Iron, Magnet, and Wire")
     matplotlib.pyplot.xlabel("x_coordinate")
     matplotlib.pyplot.ylabel("y_coordinate")
     matplotlib.pyplot.axis("equal")
