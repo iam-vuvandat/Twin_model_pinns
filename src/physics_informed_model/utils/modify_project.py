@@ -3,12 +3,13 @@ import os
 def modify_geometry_engine():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     
-    geometry_file_path = os.path.join(base_directory, '..', 'geometry_engine', 'geometry.py')
-    geometry_file_path = os.path.abspath(geometry_file_path)
+    geometry_engine_directory = os.path.abspath(os.path.join(base_directory, '..', 'geometry_engine'))
+    os.makedirs(geometry_engine_directory, exist_ok=True)
 
-    os.makedirs(os.path.dirname(geometry_file_path), exist_ok=True)
+    segment_file_path = os.path.join(geometry_engine_directory, 'segment.py')
+    geometry_file_path = os.path.join(geometry_engine_directory, 'geometry.py')
 
-    geometry_source_code = """import torch
+    segment_source_code = """import torch
 from abc import ABC, abstractmethod
 
 class Segment(ABC):
@@ -47,7 +48,6 @@ class Segment(ABC):
     @abstractmethod
     def compute_signed_distance_field(self, points_tensor):
         pass
-
 
 class PolygonSegment(Segment):
     def __init__(self, vertices_list=None):
@@ -122,7 +122,10 @@ class PolygonSegment(Segment):
         )
         
         return distance_sign * minimum_distances
+"""
 
+    geometry_source_code = """import torch
+from segment import Segment, PolygonSegment
 
 class Geometry:
     def __init__(self):
@@ -306,8 +309,11 @@ if __name__ == "__main__":
     matplotlib.pyplot.show()
 """
     
-    with open(geometry_file_path, 'w', encoding='utf-8') as file_object:
-        file_object.write(geometry_source_code)
+    with open(segment_file_path, 'w', encoding='utf-8') as segment_file_object:
+        segment_file_object.write(segment_source_code)
+        
+    with open(geometry_file_path, 'w', encoding='utf-8') as geometry_file_object:
+        geometry_file_object.write(geometry_source_code)
 
 if __name__ == "__main__":
     modify_geometry_engine()
