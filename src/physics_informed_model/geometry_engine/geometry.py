@@ -41,24 +41,26 @@ class Geometry(ABC):
 
     def get_magnetization(self, coordinates, mask_tensor):
         if self.coercive_field_magnitude == 0.0:
-            return torch.zeros_like(mask_tensor), torch.zeros_like(mask_tensor)
+            return torch.zeros_like(mask_tensor, dtype=torch.float32), torch.zeros_like(mask_tensor, dtype=torch.float32)
         
         if self.magnetization_function is not None:
             return self.magnetization_function(coordinates, mask_tensor, self.coercive_field_magnitude)
             
-        coercive_field_x_axis = torch.zeros_like(mask_tensor)
-        coercive_field_y_axis = torch.zeros_like(mask_tensor)
-        coercive_field_x_axis += self.coercive_field_magnitude 
+        coercive_field_x_axis = torch.zeros_like(mask_tensor, dtype=torch.float32)
+        coercive_field_y_axis = torch.zeros_like(mask_tensor, dtype=torch.float32)
+        coercive_field_x_axis[mask_tensor] = self.coercive_field_magnitude 
         return coercive_field_x_axis, coercive_field_y_axis
 
     def get_current_density(self, coordinates, mask_tensor):
         if self.current_density_z_axis == 0.0 and self.current_density_function is None:
-            return torch.zeros_like(mask_tensor)
+            return torch.zeros_like(mask_tensor, dtype=torch.float32)
             
         if self.current_density_function is not None:
             return self.current_density_function(coordinates, mask_tensor, self.current_density_z_axis)
             
-        return torch.ones_like(mask_tensor) * self.current_density_z_axis
+        current_density_tensor = torch.zeros_like(mask_tensor, dtype=torch.float32)
+        current_density_tensor[mask_tensor] = self.current_density_z_axis
+        return current_density_tensor
 
     @abstractmethod
     def compute_signed_distance_field(self, points_tensor):
