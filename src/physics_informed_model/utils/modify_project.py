@@ -4,17 +4,17 @@ def modify_geometry_engine():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     
     geometry_engine_directory = os.path.abspath(os.path.join(base_directory, '..', 'geometry_engine'))
-    functions_directory = os.path.join(geometry_engine_directory, 'functions')
+    segment_directory = os.path.join(geometry_engine_directory, 'segment')
     
     os.makedirs(geometry_engine_directory, exist_ok=True)
-    os.makedirs(functions_directory, exist_ok=True)
+    os.makedirs(segment_directory, exist_ok=True)
 
-    init_file_path = os.path.join(functions_directory, '__init__.py')
-    polygon_sdf_file_path = os.path.join(functions_directory, 'polygon_sdf.py')
-    global_sdf_file_path = os.path.join(functions_directory, 'global_sdf.py')
-    global_properties_file_path = os.path.join(functions_directory, 'global_properties.py')
+    segment_init_file_path = os.path.join(segment_directory, '__init__.py')
+    segment_file_path = os.path.join(segment_directory, 'segment.py')
+    polygon_sdf_file_path = os.path.join(segment_directory, 'polygon_signed_distance_field.py')
     
-    segment_file_path = os.path.join(geometry_engine_directory, 'segment.py')
+    global_sdf_file_path = os.path.join(geometry_engine_directory, 'global_signed_distance_field.py')
+    global_properties_file_path = os.path.join(geometry_engine_directory, 'global_physical_properties_evaluation.py')
     geometry_file_path = os.path.join(geometry_engine_directory, 'geometry.py')
 
     init_source_code = ""
@@ -23,7 +23,7 @@ def modify_geometry_engine():
 
 def compute_polygon_signed_distance_field(vertices_tensor, points_tensor):
     if vertices_tensor is None:
-        raise ValueError("PolygonSegment vertices must be set before computing signed distance field.")
+        raise ValueError("Segment vertices must be set before computing signed distance field.")
         
     computation_device = points_tensor.device
     computation_dtype = points_tensor.dtype
@@ -85,6 +85,54 @@ def compute_polygon_signed_distance_field(vertices_tensor, points_tensor):
     return distance_sign * minimum_distances
 """
 
+    segment_source_code = """import torch
+from segment.polygon_signed_distance_field import compute_polygon_signed_distance_field
+
+class Segment:
+    def __init__(self, vertices_list=None):
+        self.material_name = "air"
+        self.vacuum_reluctivity = 795774.715459
+        
+        self.relative_permeability = 1.0
+        self.magnetic_curve_function = None
+        
+        self.coercive_field_magnitude = 0.0
+        self.magnetization_function = None
+        
+        self.current_density_z_axis = 0.0
+        self.current_density_function = None
+        
+        self.vertices_tensor = None
+        if vertices_list is not None:
+            self.set_vertices(vertices_list)
+
+    def set_vertices(self, vertices_list):
+        self.vertices_tensor = torch.tensor(vertices_list, dtype=torch.float32)
+        return self
+
+    def set_material_properties(
+        self, 
+        name="default", 
+        relative_permeability=1.0, 
+        magnetic_curve_function=None, 
+        coercive_field_magnitude=0.0, 
+        magnetization_function=None, 
+        current_density_z_axis=0.0,
+        current_density_function=None
+    ):
+        self.material_name = name
+        self.relative_permeability = relative_permeability
+        self.magnetic_curve_function = magnetic_curve_function
+        self.coercive_field_magnitude = coercive_field_magnitude
+        self.magnetization_function = magnetization_function
+        self.current_density_z_axis = current_density_z_axis
+        self.current_density_function = current_density_function
+        return self
+
+    def compute_signed_distance_field(self, points_tensor):
+        return compute_polygon_signed_distance_field(self.vertices_tensor, points_tensor)
+"""
+
     global_sdf_source_code = """import torch
 
 def compute_global_signed_distance_field(segments_list, points_tensor):
@@ -138,67 +186,10 @@ def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_rel
     }
 """
 
-    segment_source_code = """import torch
-from abc import ABC, abstractmethod
-from functions.polygon_sdf import compute_polygon_signed_distance_field
-
-class Segment(ABC):
-    def __init__(self):
-        self.material_name = "air"
-        self.vacuum_reluctivity = 795774.715459
-        
-        self.relative_permeability = 1.0
-        self.magnetic_curve_function = None
-        
-        self.coercive_field_magnitude = 0.0
-        self.magnetization_function = None
-        
-        self.current_density_z_axis = 0.0
-        self.current_density_function = None
-
-    def set_material_properties(
-        self, 
-        name="default", 
-        relative_permeability=1.0, 
-        magnetic_curve_function=None, 
-        coercive_field_magnitude=0.0, 
-        magnetization_function=None, 
-        current_density_z_axis=0.0,
-        current_density_function=None
-    ):
-        self.material_name = name
-        self.relative_permeability = relative_permeability
-        self.magnetic_curve_function = magnetic_curve_function
-        self.coercive_field_magnitude = coercive_field_magnitude
-        self.magnetization_function = magnetization_function
-        self.current_density_z_axis = current_density_z_axis
-        self.current_density_function = current_density_function
-        return self
-
-    @abstractmethod
-    def compute_signed_distance_field(self, points_tensor):
-        pass
-
-
-class PolygonSegment(Segment):
-    def __init__(self, vertices_list=None):
-        super().__init__()
-        self.vertices_tensor = None
-        if vertices_list is not None:
-            self.set_vertices(vertices_list)
-
-    def set_vertices(self, vertices_list):
-        self.vertices_tensor = torch.tensor(vertices_list, dtype=torch.float32)
-        return self
-
-    def compute_signed_distance_field(self, points_tensor):
-        return compute_polygon_signed_distance_field(self.vertices_tensor, points_tensor)
-"""
-
     geometry_source_code = """import torch
-from segment import Segment, PolygonSegment
-from functions.global_sdf import compute_global_signed_distance_field
-from functions.global_properties import evaluate_global_physical_properties
+from segment.segment import Segment
+from global_signed_distance_field import compute_global_signed_distance_field
+from global_physical_properties_evaluation import evaluate_global_physical_properties
 
 class Geometry:
     def __init__(self):
@@ -214,151 +205,25 @@ class Geometry:
 
     def evaluate_global_physical_properties(self, points_tensor):
         return evaluate_global_physical_properties(self.segments_list, points_tensor, self.vacuum_reluctivity)
-
-
-if __name__ == "__main__":
-    import numpy
-    import matplotlib.pyplot
-    import matplotlib.colors
-
-    def generate_shifted_circle_vertices_list(radius_value, center_x_coordinate, center_y_coordinate, number_of_points=64):
-        angles_array = numpy.linspace(0, 2 * numpy.pi, number_of_points, endpoint=False)
-        return [
-            [
-                center_x_coordinate + radius_value * numpy.cos(angle), 
-                center_y_coordinate + radius_value * numpy.sin(angle)
-            ] for angle in angles_array
-        ]
-
-    square_iron_vertices_list = [[-2.0, 1.0], [-1.0, 1.0], [-1.0, 0.0], [-2.0, 0.0]]
-    square_iron_segment = PolygonSegment().set_vertices(square_iron_vertices_list).set_material_properties(
-        name="iron",
-        relative_permeability=1000.0
-    )
-
-    square_magnet_vertices_list = [[1.0, 1.0], [2.0, 1.0], [2.0, 0.0], [1.0, 0.0]]
-    square_magnet_segment = PolygonSegment().set_vertices(square_magnet_vertices_list).set_material_properties(
-        name="magnet",
-        relative_permeability=1.05,
-        coercive_field_magnitude=800000.0
-    )
-
-    circular_wire_vertices_list = generate_shifted_circle_vertices_list(
-        radius_value=0.5, 
-        center_x_coordinate=0.0, 
-        center_y_coordinate=-1.0, 
-        number_of_points=64
-    )
-    circular_wire_segment = PolygonSegment().set_vertices(circular_wire_vertices_list).set_material_properties(
-        name="copper_wire",
-        relative_permeability=1.0,
-        current_density_z_axis=5000000.0
-    )
-
-    computational_domain_geometry = Geometry()
-    computational_domain_geometry.add_segment(square_iron_segment)
-    computational_domain_geometry.add_segment(square_magnet_segment)
-    computational_domain_geometry.add_segment(circular_wire_segment)
-
-    spatial_resolution_value = 250
-    x_coordinates_array = numpy.linspace(-3.0, 3.0, spatial_resolution_value)
-    y_coordinates_array = numpy.linspace(-3.0, 3.0, spatial_resolution_value)
-    x_mesh_grid_array, y_mesh_grid_array = numpy.meshgrid(x_coordinates_array, y_coordinates_array)
-    
-    coordinates_numpy_array = numpy.column_stack((x_mesh_grid_array.ravel(), y_mesh_grid_array.ravel()))
-    test_points_tensor = torch.tensor(coordinates_numpy_array, dtype=torch.float32)
-
-    global_signed_distance_field_tensor = computational_domain_geometry.compute_global_signed_distance_field(test_points_tensor)
-    physical_properties_dictionary = computational_domain_geometry.evaluate_global_physical_properties(test_points_tensor)
-
-    signed_distance_field_grid_array = global_signed_distance_field_tensor.numpy().reshape(spatial_resolution_value, spatial_resolution_value)
-    material_classification_grid_array = physical_properties_dictionary["material_classification"].numpy().reshape(spatial_resolution_value, spatial_resolution_value)
-    relative_permeability_grid_array = physical_properties_dictionary["relative_permeability"].numpy().reshape(spatial_resolution_value, spatial_resolution_value)
-    coercive_field_x_grid_array = physical_properties_dictionary["coercive_field_x"].numpy().reshape(spatial_resolution_value, spatial_resolution_value)
-    coercive_field_y_grid_array = physical_properties_dictionary["coercive_field_y"].numpy().reshape(spatial_resolution_value, spatial_resolution_value)
-    current_density_z_grid_array = physical_properties_dictionary["current_density_z"].numpy().reshape(spatial_resolution_value, spatial_resolution_value)
-
-    figure_object, axes_array = matplotlib.pyplot.subplots(nrows=2, ncols=3, figsize=(18, 12))
-    
-    color_map_signed_distance_field = matplotlib.colors.LinearSegmentedColormap.from_list("custom_red_white_blue", ["red", "white", "blue"])
-    two_slope_normalization_object = matplotlib.colors.TwoSlopeNorm(
-        vmin=signed_distance_field_grid_array.min() if signed_distance_field_grid_array.min() < 0 else -1e-5, 
-        vcenter=0.0, 
-        vmax=signed_distance_field_grid_array.max() if signed_distance_field_grid_array.max() > 0 else 1e-5
-    )
-    
-    contour_plot_signed_distance_field = axes_array[0, 0].contourf(
-        x_mesh_grid_array, y_mesh_grid_array, signed_distance_field_grid_array, 
-        levels=60, cmap=color_map_signed_distance_field, norm=two_slope_normalization_object
-    )
-    axes_array[0, 0].contour(x_mesh_grid_array, y_mesh_grid_array, signed_distance_field_grid_array, levels=[0.0], colors="black", linewidths=1.5)
-    axes_array[0, 0].set_title("Global Signed Distance Field")
-    axes_array[0, 0].set_aspect("equal")
-    figure_object.colorbar(contour_plot_signed_distance_field, ax=axes_array[0, 0], label="Distance (m)")
-
-    color_map_material = matplotlib.colors.ListedColormap(["white", "gray", "red", "orange"])
-    contour_plot_material = axes_array[0, 1].contourf(
-        x_mesh_grid_array, y_mesh_grid_array, material_classification_grid_array, 
-        levels=[-0.5, 0.5, 1.5, 2.5, 3.5], cmap=color_map_material
-    )
-    axes_array[0, 1].set_title("Material Classification")
-    axes_array[0, 1].set_aspect("equal")
-    color_bar_material = figure_object.colorbar(contour_plot_material, ax=axes_array[0, 1], ticks=[0, 1, 2, 3])
-    color_bar_material.ax.set_yticklabels(["Air", "Iron", "Magnet", "Copper Wire"])
-
-    contour_plot_permeability = axes_array[0, 2].contourf(
-        x_mesh_grid_array, y_mesh_grid_array, relative_permeability_grid_array, 
-        levels=60, cmap="viridis"
-    )
-    axes_array[0, 2].set_title("Relative Permeability")
-    axes_array[0, 2].set_aspect("equal")
-    figure_object.colorbar(contour_plot_permeability, ax=axes_array[0, 2], label="Permeability Value")
-
-    contour_plot_current = axes_array[1, 0].contourf(
-        x_mesh_grid_array, y_mesh_grid_array, current_density_z_grid_array, 
-        levels=60, cmap="plasma"
-    )
-    axes_array[1, 0].set_title("Current Density Z-Axis")
-    axes_array[1, 0].set_aspect("equal")
-    figure_object.colorbar(contour_plot_current, ax=axes_array[1, 0], label="Current Density (A/m^2)")
-
-    contour_plot_coercive_x = axes_array[1, 1].contourf(
-        x_mesh_grid_array, y_mesh_grid_array, coercive_field_x_grid_array, 
-        levels=60, cmap="coolwarm"
-    )
-    axes_array[1, 1].set_title("Coercive Field X-Axis")
-    axes_array[1, 1].set_aspect("equal")
-    figure_object.colorbar(contour_plot_coercive_x, ax=axes_array[1, 1], label="Magnetic Field (A/m)")
-
-    contour_plot_coercive_y = axes_array[1, 2].contourf(
-        x_mesh_grid_array, y_mesh_grid_array, coercive_field_y_grid_array, 
-        levels=60, cmap="coolwarm"
-    )
-    axes_array[1, 2].set_title("Coercive Field Y-Axis")
-    axes_array[1, 2].set_aspect("equal")
-    figure_object.colorbar(contour_plot_coercive_y, ax=axes_array[1, 2], label="Magnetic Field (A/m)")
-
-    matplotlib.pyplot.tight_layout()
-    matplotlib.pyplot.show()
 """
-    
-    with open(init_file_path, 'w', encoding='utf-8') as init_file_object:
-        init_file_object.write(init_source_code)
+
+    with open(segment_init_file_path, 'w', encoding='utf-8') as segment_init_file_object:
+        segment_init_file_object.write(init_source_code)
 
     with open(polygon_sdf_file_path, 'w', encoding='utf-8') as polygon_sdf_file_object:
         polygon_sdf_file_object.write(polygon_sdf_source_code)
-        
+
+    with open(segment_file_path, 'w', encoding='utf-8') as segment_file_object:
+        segment_file_object.write(segment_source_code)
+
     with open(global_sdf_file_path, 'w', encoding='utf-8') as global_sdf_file_object:
         global_sdf_file_object.write(global_sdf_source_code)
         
     with open(global_properties_file_path, 'w', encoding='utf-8') as global_properties_file_object:
         global_properties_file_object.write(global_properties_source_code)
-
-    with open(segment_file_path, 'w', encoding='utf-8') as segment_file_object:
-        segment_file_object.write(segment_source_code)
         
     with open(geometry_file_path, 'w', encoding='utf-8') as geometry_file_object:
         geometry_file_object.write(geometry_source_code)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     modify_geometry_engine()
