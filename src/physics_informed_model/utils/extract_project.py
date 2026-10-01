@@ -57,7 +57,11 @@ def extract_physics_informed_model_source_code():
                 
                 try:
                     with open(absolute_file_path, 'r', encoding='utf-8') as file_object:
-                        text_content_list.append(file_object.read())
+                        lines_list = file_object.readlines()
+                        for line_string in lines_list:
+                            if line_string.startswith("if __name__ == '__main__':") or line_string.startswith('if __name__ == "__main__":'):
+                                break
+                            text_content_list.append(line_string.rstrip('\n'))
                 except Exception as exception_object:
                     text_content_list.append(f"Error reading file: {exception_object}")
                     
