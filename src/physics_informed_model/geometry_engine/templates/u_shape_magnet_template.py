@@ -1,3 +1,8 @@
+import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..')))
+
 import torch
 from src.physics_informed_model.geometry_engine.geometry import Polygon
 
@@ -39,11 +44,7 @@ class UShapeMagnetTemplate:
         return air_domain, magnet_u_shape, air_box
 
 if __name__ == "__main__":
-    import os
     import matplotlib.pyplot as plt
-    import sys
-    
-    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..')))
     
     template = UShapeMagnetTemplate(width=2.0, height=3.0, thickness=0.5, air_box_size=5.0)
     air_domain, magnet_u_shape, air_box = template.build()

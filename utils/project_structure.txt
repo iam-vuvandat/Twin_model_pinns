@@ -1,41 +1,38 @@
 Twin_model_pinns/
 ├── README.md
 ├── batch.log
-├── demo.py
-├── demo2.py
-├── demo3.py
 ├── draft
 │   └── draw1.py
+├── examples
+│   ├── demo.py
+│   ├── demo2.py
+│   ├── demo3.py
+│   └── test.py
 ├── main.ipynb
 ├── requirements.txt
 ├── src
-│   ├── ansys_electronic_desktop
-│   │   └── rmxprt
-│   │       └── synchronous_machine
-│   │           └── reluctance_synchronous_machine
-│   │               ├── configuation.py
-│   │               ├── reluctance_synchronous_motor.py
-│   │               └── utils
-│   │                   ├── create_model.py
-│   │                   └── reset_ansys_environment.py
-│   ├── physics_informed_model
-│   │   ├── geometry_engine
-│   │   │   └── geometry.py
-│   │   ├── neural_networks
-│   │   │   ├── physics_neural_network.py
-│   │   │   ├── pinn_architecture.py
-│   │   │   └── training_manager.py
-│   │   ├── physics_domain
-│   │   │   ├── materials
-│   │   │   │   ├── material.py
-│   │   │   │   └── material_permeability_properties.py
-│   │   │   └── physical_equations
-│   │   │       └── maxwell_pde_loss.py
-│   │   └── trial_function_wrapper.py
-│   └── training_manager
-│       ├── collocation_sampling
-│       │   └── collocation_sampling.py
-│       └── curriculum_training_manager.py
+│   ├── ansys_aedt
+│   │   ├── configuration.py
+│   │   ├── create_model.py
+│   │   ├── reluctance_synchronous_motor.py
+│   │   └── reset_ansys_environment.py
+│   └── physics_informed_model
+│       ├── curriculum_training_manager.py
+│       ├── geometry_engine
+│       │   ├── geometry.py
+│       │   └── templates
+│       │       ├── __init__.py
+│       │       └── u_shape_magnet_template.py
+│       ├── physics_domain
+│       │   ├── collocation_sampling.py
+│       │   ├── materials
+│       │   │   └── material_permeability_properties.py
+│       │   └── physical_equations
+│       │       └── maxwell_pde_loss.py
+│       ├── physics_neural_network.py
+│       ├── pinn_architecture.py
+│       ├── training_manager.py
+│       └── trial_function_wrapper.py
 └── utils
     ├── extract_project_tree.py
     ├── generate_project.py
