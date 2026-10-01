@@ -4,13 +4,143 @@ def modify_geometry_engine():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     
     geometry_engine_directory = os.path.abspath(os.path.join(base_directory, '..', 'geometry_engine'))
+    functions_directory = os.path.join(geometry_engine_directory, 'functions')
+    
     os.makedirs(geometry_engine_directory, exist_ok=True)
+    os.makedirs(functions_directory, exist_ok=True)
 
+    init_file_path = os.path.join(functions_directory, '__init__.py')
+    polygon_sdf_file_path = os.path.join(functions_directory, 'polygon_sdf.py')
+    global_sdf_file_path = os.path.join(functions_directory, 'global_sdf.py')
+    global_properties_file_path = os.path.join(functions_directory, 'global_properties.py')
+    
     segment_file_path = os.path.join(geometry_engine_directory, 'segment.py')
     geometry_file_path = os.path.join(geometry_engine_directory, 'geometry.py')
 
+    init_source_code = ""
+
+    polygon_sdf_source_code = """import torch
+
+def compute_polygon_signed_distance_field(vertices_tensor, points_tensor):
+    if vertices_tensor is None:
+        raise ValueError("PolygonSegment vertices must be set before computing signed distance field.")
+        
+    computation_device = points_tensor.device
+    computation_dtype = points_tensor.dtype
+
+    vertices_on_device = vertices_tensor.to(
+        device=computation_device,
+        dtype=computation_dtype,
+    )
+    
+    start_points = vertices_on_device
+    end_points = torch.roll(vertices_on_device, shifts=-1, dims=0)
+    
+    edge_vectors = end_points - start_points
+    point_to_start_vectors = points_tensor.unsqueeze(1) - start_points.unsqueeze(0)
+    
+    dot_product_point_to_start_and_edge = torch.sum(point_to_start_vectors * edge_vectors.unsqueeze(0), dim=2)
+    dot_product_edge_and_edge = torch.sum(edge_vectors * edge_vectors, dim=1).unsqueeze(0)
+    
+    dot_product_edge_and_edge = torch.clamp(
+        dot_product_edge_and_edge,
+        min=torch.finfo(computation_dtype).eps,
+    )
+    
+    projection_parameter = dot_product_point_to_start_and_edge / dot_product_edge_and_edge
+    clamped_projection_parameter = torch.clamp(projection_parameter, min=0.0, max=1.0)
+    
+    closest_points = start_points.unsqueeze(0) + clamped_projection_parameter.unsqueeze(-1) * edge_vectors.unsqueeze(0)
+    distances_to_edges = torch.norm(points_tensor.unsqueeze(1) - closest_points, dim=2)
+    minimum_distances, _ = torch.min(distances_to_edges, dim=1)
+    
+    points_x_coordinates = points_tensor[:, 0].unsqueeze(1)
+    points_y_coordinates = points_tensor[:, 1].unsqueeze(1)
+    start_points_x_coordinates = start_points[:, 0].unsqueeze(0)
+    start_points_y_coordinates = start_points[:, 1].unsqueeze(0)
+    end_points_x_coordinates = end_points[:, 0].unsqueeze(0)
+    end_points_y_coordinates = end_points[:, 1].unsqueeze(0)
+    
+    condition_y_between_start_and_end = (start_points_y_coordinates <= points_y_coordinates) & (points_y_coordinates < end_points_y_coordinates)
+    condition_y_between_end_and_start = (end_points_y_coordinates <= points_y_coordinates) & (points_y_coordinates < start_points_y_coordinates)
+    valid_y_intersection = condition_y_between_start_and_end | condition_y_between_end_and_start
+    
+    y_difference = end_points_y_coordinates - start_points_y_coordinates
+    y_difference = torch.where(
+        torch.abs(y_difference) < torch.finfo(computation_dtype).eps,
+        torch.ones_like(y_difference),
+        y_difference,
+    )
+    
+    intersection_x_coordinates = start_points_x_coordinates + (points_y_coordinates - start_points_y_coordinates) * (end_points_x_coordinates - start_points_x_coordinates) / y_difference
+    ray_crossings = valid_y_intersection & (points_x_coordinates < intersection_x_coordinates)
+    
+    is_point_inside = ray_crossings.sum(dim=1) % 2 == 1
+    distance_sign = torch.where(
+        is_point_inside,
+        -torch.ones_like(minimum_distances),
+        torch.ones_like(minimum_distances),
+    )
+    
+    return distance_sign * minimum_distances
+"""
+
+    global_sdf_source_code = """import torch
+
+def compute_global_signed_distance_field(segments_list, points_tensor):
+    if not segments_list:
+        return torch.ones((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
+        
+    global_signed_distance_field = segments_list[0].compute_signed_distance_field(points_tensor)
+    
+    for segment_object in segments_list[1:]:
+        current_signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
+        global_signed_distance_field = torch.minimum(global_signed_distance_field, current_signed_distance_field)
+        
+    return global_signed_distance_field
+"""
+
+    global_properties_source_code = """import torch
+
+def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_reluctivity):
+    number_of_points = points_tensor.shape[0]
+    computation_device = points_tensor.device
+    
+    global_relative_permeability_tensor = torch.ones((number_of_points, 1), dtype=torch.float32, device=computation_device)
+    global_coercive_field_x_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
+    global_coercive_field_y_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
+    global_current_density_z_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
+    global_material_classification_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
+
+    material_index_counter = 1.0
+
+    for segment_object in segments_list:
+        signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
+        mask_tensor = signed_distance_field <= 0.0
+        
+        if mask_tensor.any():
+            global_relative_permeability_tensor[mask_tensor] = segment_object.relative_permeability
+            global_current_density_z_tensor[mask_tensor] = segment_object.current_density_z_axis
+            global_coercive_field_x_tensor[mask_tensor] = segment_object.coercive_field_magnitude
+            global_material_classification_tensor[mask_tensor] = material_index_counter
+        
+        material_index_counter += 1.0
+
+    global_reluctivity_tensor = vacuum_reluctivity / global_relative_permeability_tensor
+
+    return {
+        "reluctivity": global_reluctivity_tensor,
+        "relative_permeability": global_relative_permeability_tensor,
+        "coercive_field_x": global_coercive_field_x_tensor,
+        "coercive_field_y": global_coercive_field_y_tensor,
+        "current_density_z": global_current_density_z_tensor,
+        "material_classification": global_material_classification_tensor
+    }
+"""
+
     segment_source_code = """import torch
 from abc import ABC, abstractmethod
+from functions.polygon_sdf import compute_polygon_signed_distance_field
 
 class Segment(ABC):
     def __init__(self):
@@ -49,6 +179,7 @@ class Segment(ABC):
     def compute_signed_distance_field(self, points_tensor):
         pass
 
+
 class PolygonSegment(Segment):
     def __init__(self, vertices_list=None):
         super().__init__()
@@ -61,71 +192,13 @@ class PolygonSegment(Segment):
         return self
 
     def compute_signed_distance_field(self, points_tensor):
-        if self.vertices_tensor is None:
-            raise ValueError("PolygonSegment vertices must be set before computing signed distance field.")
-            
-        computation_device = points_tensor.device
-        computation_dtype = points_tensor.dtype
-
-        vertices_on_device = self.vertices_tensor.to(
-            device=computation_device,
-            dtype=computation_dtype,
-        )
-        
-        start_points = vertices_on_device
-        end_points = torch.roll(vertices_on_device, shifts=-1, dims=0)
-        
-        edge_vectors = end_points - start_points
-        point_to_start_vectors = points_tensor.unsqueeze(1) - start_points.unsqueeze(0)
-        
-        dot_product_point_to_start_and_edge = torch.sum(point_to_start_vectors * edge_vectors.unsqueeze(0), dim=2)
-        dot_product_edge_and_edge = torch.sum(edge_vectors * edge_vectors, dim=1).unsqueeze(0)
-        
-        dot_product_edge_and_edge = torch.clamp(
-            dot_product_edge_and_edge,
-            min=torch.finfo(computation_dtype).eps,
-        )
-        
-        projection_parameter = dot_product_point_to_start_and_edge / dot_product_edge_and_edge
-        clamped_projection_parameter = torch.clamp(projection_parameter, min=0.0, max=1.0)
-        
-        closest_points = start_points.unsqueeze(0) + clamped_projection_parameter.unsqueeze(-1) * edge_vectors.unsqueeze(0)
-        distances_to_edges = torch.norm(points_tensor.unsqueeze(1) - closest_points, dim=2)
-        minimum_distances, _ = torch.min(distances_to_edges, dim=1)
-        
-        points_x_coordinates = points_tensor[:, 0].unsqueeze(1)
-        points_y_coordinates = points_tensor[:, 1].unsqueeze(1)
-        start_points_x_coordinates = start_points[:, 0].unsqueeze(0)
-        start_points_y_coordinates = start_points[:, 1].unsqueeze(0)
-        end_points_x_coordinates = end_points[:, 0].unsqueeze(0)
-        end_points_y_coordinates = end_points[:, 1].unsqueeze(0)
-        
-        condition_y_between_start_and_end = (start_points_y_coordinates <= points_y_coordinates) & (points_y_coordinates < end_points_y_coordinates)
-        condition_y_between_end_and_start = (end_points_y_coordinates <= points_y_coordinates) & (points_y_coordinates < start_points_y_coordinates)
-        valid_y_intersection = condition_y_between_start_and_end | condition_y_between_end_and_start
-        
-        y_difference = end_points_y_coordinates - start_points_y_coordinates
-        y_difference = torch.where(
-            torch.abs(y_difference) < torch.finfo(computation_dtype).eps,
-            torch.ones_like(y_difference),
-            y_difference,
-        )
-        
-        intersection_x_coordinates = start_points_x_coordinates + (points_y_coordinates - start_points_y_coordinates) * (end_points_x_coordinates - start_points_x_coordinates) / y_difference
-        ray_crossings = valid_y_intersection & (points_x_coordinates < intersection_x_coordinates)
-        
-        is_point_inside = ray_crossings.sum(dim=1) % 2 == 1
-        distance_sign = torch.where(
-            is_point_inside,
-            -torch.ones_like(minimum_distances),
-            torch.ones_like(minimum_distances),
-        )
-        
-        return distance_sign * minimum_distances
+        return compute_polygon_signed_distance_field(self.vertices_tensor, points_tensor)
 """
 
     geometry_source_code = """import torch
 from segment import Segment, PolygonSegment
+from functions.global_sdf import compute_global_signed_distance_field
+from functions.global_properties import evaluate_global_physical_properties
 
 class Geometry:
     def __init__(self):
@@ -137,51 +210,11 @@ class Geometry:
         return self
 
     def compute_global_signed_distance_field(self, points_tensor):
-        if not self.segments_list:
-            return torch.ones((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            
-        global_signed_distance_field = self.segments_list[0].compute_signed_distance_field(points_tensor)
-        
-        for segment_object in self.segments_list[1:]:
-            current_signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
-            global_signed_distance_field = torch.minimum(global_signed_distance_field, current_signed_distance_field)
-            
-        return global_signed_distance_field
+        return compute_global_signed_distance_field(self.segments_list, points_tensor)
 
     def evaluate_global_physical_properties(self, points_tensor):
-        number_of_points = points_tensor.shape[0]
-        computation_device = points_tensor.device
-        
-        global_relative_permeability_tensor = torch.ones((number_of_points, 1), dtype=torch.float32, device=computation_device)
-        global_coercive_field_x_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-        global_coercive_field_y_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-        global_current_density_z_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-        global_material_classification_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
+        return evaluate_global_physical_properties(self.segments_list, points_tensor, self.vacuum_reluctivity)
 
-        material_index_counter = 1.0
-
-        for segment_object in self.segments_list:
-            signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
-            mask_tensor = signed_distance_field <= 0.0
-            
-            if mask_tensor.any():
-                global_relative_permeability_tensor[mask_tensor] = segment_object.relative_permeability
-                global_current_density_z_tensor[mask_tensor] = segment_object.current_density_z_axis
-                global_coercive_field_x_tensor[mask_tensor] = segment_object.coercive_field_magnitude
-                global_material_classification_tensor[mask_tensor] = material_index_counter
-            
-            material_index_counter += 1.0
-
-        global_reluctivity_tensor = self.vacuum_reluctivity / global_relative_permeability_tensor
-
-        return {
-            "reluctivity": global_reluctivity_tensor,
-            "relative_permeability": global_relative_permeability_tensor,
-            "coercive_field_x": global_coercive_field_x_tensor,
-            "coercive_field_y": global_coercive_field_y_tensor,
-            "current_density_z": global_current_density_z_tensor,
-            "material_classification": global_material_classification_tensor
-        }
 
 if __name__ == "__main__":
     import numpy
@@ -309,6 +342,18 @@ if __name__ == "__main__":
     matplotlib.pyplot.show()
 """
     
+    with open(init_file_path, 'w', encoding='utf-8') as init_file_object:
+        init_file_object.write(init_source_code)
+
+    with open(polygon_sdf_file_path, 'w', encoding='utf-8') as polygon_sdf_file_object:
+        polygon_sdf_file_object.write(polygon_sdf_source_code)
+        
+    with open(global_sdf_file_path, 'w', encoding='utf-8') as global_sdf_file_object:
+        global_sdf_file_object.write(global_sdf_source_code)
+        
+    with open(global_properties_file_path, 'w', encoding='utf-8') as global_properties_file_object:
+        global_properties_file_object.write(global_properties_source_code)
+
     with open(segment_file_path, 'w', encoding='utf-8') as segment_file_object:
         segment_file_object.write(segment_source_code)
         
