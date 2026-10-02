@@ -416,6 +416,43 @@ class TrainingManager:
             print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
 """
 
+    curriculum_training_manager_source_code = """import torch
+from .training_manager import TrainingManager
+
+class CurriculumTrainingManager:
+    def __init__(self, training_manager: TrainingManager):
+        self.training_manager = training_manager
+
+    def train_source_ramping(self, stages, epochs_per_stage, xy, sdf_boundary, iron_mask, magnet_mask, slot_masks_dict, slot_current_dict, H_cx, H_cy):
+        for stage in range(1, stages + 1):
+            alpha = stage / stages
+            
+            current_dict_scaled = {k: v * alpha for k, v in slot_current_dict.items()}
+            H_cx_scaled = H_cx * alpha
+            H_cy_scaled = H_cy * alpha
+            
+            print(f"--- Curriculum Stage {stage}/{stages} (Alpha = {alpha:.2f}) ---")
+            
+            self.training_manager.train_adam(
+                epochs_per_stage, xy, sdf_boundary, iron_mask, magnet_mask, 
+                slot_masks_dict, current_dict_scaled, H_cx_scaled, H_cy_scaled
+            )
+            
+        print("--- Curriculum L-BFGS Refinement (Alpha = 1.00) ---")
+        
+        self.training_manager.train_lbfgs(
+            epochs=100, 
+            xy=xy, 
+            sdf_boundary=sdf_boundary, 
+            iron_mask=iron_mask, 
+            magnet_mask=magnet_mask, 
+            slot_masks_dict=slot_masks_dict, 
+            slot_current_dict=slot_current_dict, 
+            H_cx=H_cx, 
+            H_cy=H_cy
+        )
+"""
+
     with open(segment_init_file_path, 'w', encoding='utf-8') as segment_init_file_object:
         segment_init_file_object.write(init_source_code)
 
@@ -445,8 +482,11 @@ class TrainingManager:
         
     with open(training_manager_file_path, 'w', encoding='utf-8') as training_manager_file_object:
         training_manager_file_object.write(training_manager_source_code)
+        
+    with open(curriculum_training_manager_file_path, 'w', encoding='utf-8') as curriculum_training_manager_file_object:
+        curriculum_training_manager_file_object.write(curriculum_training_manager_source_code)
 
-    for empty_file_path in [electro_magnetic_pinn_file_path, curriculum_training_manager_file_path]:
+    for empty_file_path in [electro_magnetic_pinn_file_path]:
         if not os.path.exists(empty_file_path):
             with open(empty_file_path, 'w', encoding='utf-8') as f:
                 pass
