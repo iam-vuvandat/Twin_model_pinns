@@ -6,6 +6,8 @@ if current_directory not in sys.path:
     sys.path.insert(0, current_directory)
 
 import torch
+import numpy as np
+import matplotlib.pyplot as plt
 from geometry_engine.geometry import Geometry
 from geometry_engine.segment.segment import Segment
 from physics_domain.collocation_sampler import CollocationSampler
@@ -46,25 +48,19 @@ def main():
         x_boundaries_tuple=(-0.05, 0.05),
         y_boundaries_tuple=(-0.05, 0.05)
     )
-    
-    # Kêu gọi hàm hiển thị đã được tích hợp trong lớp Geometry
-    geometry_instance.plot_problem_definition(
-        x_boundaries_tuple=(-0.05, 0.05),
-        y_boundaries_tuple=(-0.05, 0.05),
-        resolution=100
-    )
 
     model = ElectroMagneticPINN(
         geometry_engine_instance=geometry_instance,
         collocation_sampler_instance=collocation_sampler_instance
     )
     
+    # [CẬP NHẬT CỐT LÕI]: Tăng điểm lấy mẫu và chu kỳ huấn luyện Adam
     model.execute_training_process(
-        number_of_uniform_points=200,
-        number_of_interface_points=50,
+        number_of_uniform_points=2500,     # Tăng từ 200 lên 2500
+        number_of_interface_points=800,    # Tăng từ 50 lên 800
         distance_threshold=0.005,
         stages=2,
-        epochs_per_stage=5
+        epochs_per_stage=400               # Tăng từ 5 lên 400 để Adam có thời gian "làm nóng"
     )
     
     test_points = collocation_sampler_instance.generate_uniform_points_tensor(10)

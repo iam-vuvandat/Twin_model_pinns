@@ -5,7 +5,8 @@ from geometry_engine.global_physical_properties_evaluation import evaluate_globa
 from geometry_engine.geometry_visualizer import plot_geometry_problem
 
 class Geometry:
-    def __init__(self, steepness=5000.0):
+    # [CẬP NHẬT]: Steepness = 300.0 giúp vùng giao diện mở rộng ra, mạng nơ-ron dễ dàng nắm bắt đạo hàm
+    def __init__(self, steepness=300.0):
         self.segments_list = []
         self.vacuum_reluctivity = 795774.715459
         self.steepness = steepness
