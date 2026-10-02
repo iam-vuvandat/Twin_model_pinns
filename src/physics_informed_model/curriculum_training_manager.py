@@ -1,38 +1,35 @@
 import torch
-from training_manager import TrainingManager
+from .training_manager import TrainingManager
 
 class CurriculumTrainingManager:
-    def __init__(self, training_manager_instance: TrainingManager):
-        self.training_manager_instance = training_manager_instance
+    def __init__(self, training_manager: TrainingManager):
+        self.training_manager = training_manager
 
-    def train_source_ramping(self, stages, epochs_per_stage, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+    def train_source_ramping(self, stages, epochs_per_stage, xy, sdf_boundary, iron_mask, magnet_mask, slot_masks_dict, slot_current_dict, H_cx, H_cy):
         for stage in range(1, stages + 1):
             alpha = stage / stages
             
-            current_density_z_tensor_scaled = current_density_z_tensor * alpha
-            coercive_field_x_tensor_scaled = coercive_field_x_tensor * alpha
-            coercive_field_y_tensor_scaled = coercive_field_y_tensor * alpha
+            current_dict_scaled = {k: v * alpha for k, v in slot_current_dict.items()}
+            H_cx_scaled = H_cx * alpha
+            H_cy_scaled = H_cy * alpha
             
             print(f"--- Curriculum Stage {stage}/{stages} (Alpha = {alpha:.2f}) ---")
             
-            self.training_manager_instance.train_adam(
-                epochs=epochs_per_stage,
-                points_tensor=points_tensor,
-                signed_distance_field_tensor=signed_distance_field_tensor,
-                reluctivity_tensor=reluctivity_tensor,
-                current_density_z_tensor=current_density_z_tensor_scaled,
-                coercive_field_x_tensor=coercive_field_x_tensor_scaled,
-                coercive_field_y_tensor=coercive_field_y_tensor_scaled
+            self.training_manager.train_adam(
+                epochs_per_stage, xy, sdf_boundary, iron_mask, magnet_mask, 
+                slot_masks_dict, current_dict_scaled, H_cx_scaled, H_cy_scaled
             )
             
         print("--- Curriculum L-BFGS Refinement (Alpha = 1.00) ---")
         
-        self.training_manager_instance.train_lbfgs(
+        self.training_manager.train_lbfgs(
             epochs=100, 
-            points_tensor=points_tensor, 
-            signed_distance_field_tensor=signed_distance_field_tensor, 
-            reluctivity_tensor=reluctivity_tensor, 
-            current_density_z_tensor=current_density_z_tensor, 
-            coercive_field_x_tensor=coercive_field_x_tensor, 
-            coercive_field_y_tensor=coercive_field_y_tensor
+            xy=xy, 
+            sdf_boundary=sdf_boundary, 
+            iron_mask=iron_mask, 
+            magnet_mask=magnet_mask, 
+            slot_masks_dict=slot_masks_dict, 
+            slot_current_dict=slot_current_dict, 
+            H_cx=H_cx, 
+            H_cy=H_cy
         )
