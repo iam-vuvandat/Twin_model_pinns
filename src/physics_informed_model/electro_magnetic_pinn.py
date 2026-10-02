@@ -9,7 +9,8 @@ class ElectroMagneticPINN:
         self.geometry_engine_instance = geometry_engine_instance
         self.collocation_sampler_instance = collocation_sampler_instance
         
-        self.pinn_architecture_instance = PINNArchitecture()
+        # PINNArchitecture tự động xử lý Dirichlet Boundary Condition dựa vào domain_scale
+        self.pinn_architecture_instance = PINNArchitecture(domain_scale=self.collocation_sampler_instance.x_maximum)
         self.maxwell_pde_loss_instance = MaxwellPDELoss()
         
         self.training_manager_instance = TrainingManager(
@@ -29,14 +30,14 @@ class ElectroMagneticPINN:
             distance_threshold=distance_threshold
         )
         
-        signed_distance_field_tensor = self.geometry_engine_instance.compute_global_signed_distance_field(points_tensor)
         physical_properties_dictionary = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
         
+        # [CẬP NHẬT]: Dừng việc đưa SDF vào quá trình huấn luyện
         self.curriculum_training_manager_instance.train_source_ramping(
             stages=stages,
             epochs_per_stage=epochs_per_stage,
             points_tensor=points_tensor,
-            signed_distance_field_tensor=signed_distance_field_tensor,
+            signed_distance_field_tensor=None,
             reluctivity_tensor=physical_properties_dictionary["reluctivity"],
             current_density_z_tensor=physical_properties_dictionary["current_density_z"],
             coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
@@ -45,9 +46,8 @@ class ElectroMagneticPINN:
 
     def predict_magnetic_vector_potential(self, points_tensor):
         self.pinn_architecture_instance.eval()
-        signed_distance_field_tensor = self.geometry_engine_instance.compute_global_signed_distance_field(points_tensor)
         
         with torch.no_grad():
-            magnetic_vector_potential_z_tensor = self.pinn_architecture_instance(points_tensor, signed_distance_field_tensor)
+            magnetic_vector_potential_z_tensor = self.pinn_architecture_instance(points_tensor)
             
         return magnetic_vector_potential_z_tensor

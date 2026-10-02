@@ -1,144 +1,11 @@
 import os
 
-def fix_boundary_conditions():
+def add_post_training_plots():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     project_root_directory = os.path.abspath(os.path.join(base_directory, '..'))
     
-    pinn_architecture_file_path = os.path.join(project_root_directory, 'pinn_architecture.py')
-    training_manager_file_path = os.path.join(project_root_directory, 'training_manager.py')
     electro_magnetic_pinn_file_path = os.path.join(project_root_directory, 'electro_magnetic_pinn.py')
-
-    pinn_architecture_source_code = """import torch
-import torch.nn as nn
-
-class PINNArchitecture(nn.Module):
-    def __init__(self, input_dim=2, hidden_layers=4, hidden_neurons=50, output_dim=1, domain_scale=0.05):
-        super().__init__()
-        self.domain_scale = domain_scale
-        
-        layers = []
-        layers.append(nn.Linear(input_dim, hidden_neurons))
-        layers.append(nn.SiLU())
-        
-        for _ in range(hidden_layers - 1):
-            layers.append(nn.Linear(hidden_neurons, hidden_neurons))
-            layers.append(nn.SiLU())
-            
-        layers.append(nn.Linear(hidden_neurons, output_dim))
-        
-        self.network = nn.Sequential(*layers)
-        self._initialize_weights()
-
-    def _initialize_weights(self):
-        for module in self.network:
-            if isinstance(module, nn.Linear):
-                nn.init.xavier_normal_(module.weight)
-                nn.init.zeros_(module.bias)
-
-    def boundary_factor(self, xy):
-        # Tính toán Boundary Factor để ép A_z = 0 tại rìa miền khảo sát (domain_scale)
-        x_factor = 1.0 - (xy[:, 0:1] / self.domain_scale)**2
-        y_factor = 1.0 - (xy[:, 1:2] / self.domain_scale)**2
-        return x_factor * y_factor
-
-    def forward(self, xy):
-        xy_normalized = xy / self.domain_scale
-        raw_output = self.network(xy_normalized)
-        
-        # [CẬP NHẬT]: Nhân với true boundary_factor, loại bỏ sdf_boundary của vật liệu
-        A_z = raw_output * self.boundary_factor(xy)
-        return A_z
-"""
-
-    training_manager_source_code = """import torch
-import torch.optim as optim
-
-class TrainingManager:
-    def __init__(self, model, pde_evaluator, lr_adam=1e-3, loss_scaling_factor=1e-6):
-        self.model = model
-        self.pde_evaluator = pde_evaluator
-        self.loss_scaling_factor = loss_scaling_factor
-        
-        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
-        
-        self.optimizer_lbfgs = optim.LBFGS(
-            self.model.parameters(),
-            lr=1.0,
-            max_iter=50,
-            max_eval=50,
-            tolerance_grad=1e-7,
-            tolerance_change=1e-9,
-            history_size=100,
-            line_search_fn="strong_wolfe"
-        )
-
-    def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        # [CẬP NHẬT]: Không còn truyền signed_distance_field_tensor vào mạng model
-        magnetic_vector_potential_z_tensor = self.model(points_tensor)
-        
-        residual = self.pde_evaluator.compute_residual(
-            xy=points_tensor,
-            A_z=magnetic_vector_potential_z_tensor,
-            nu=reluctivity_tensor,
-            J_z=current_density_z_tensor,
-            H_cx=coercive_field_x_tensor,
-            H_cy=coercive_field_y_tensor
-        )
-        
-        residual_scaled = residual * self.loss_scaling_factor
-        loss_pde = torch.mean(residual_scaled**2)
-        return loss_pde
-
-    def train_adam(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        self.model.train()
-        best_loss = float('inf')
-        best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
-        
-        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
-        
-        for epoch in range(epochs):
-            self.optimizer_adam.zero_grad()
-            
-            loss = self.compute_loss(
-                points_tensor, reluctivity_tensor, 
-                current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
-            )
-            
-            if torch.isnan(loss) or loss.item() > 1.5 * best_loss:
-                self.model.load_state_dict(best_model_state)
-                for param_group in self.optimizer_adam.param_groups:
-                    param_group['lr'] *= 0.8
-                continue
-                
-            loss.backward(retain_graph=True)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-            self.optimizer_adam.step()
-            scheduler_adam.step()
-            
-            current_loss_value = loss.item()
-            if current_loss_value < best_loss:
-                best_loss = current_loss_value
-                best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
-            
-            if (epoch + 1) % 100 == 0:
-                current_lr = self.optimizer_adam.param_groups[0]['lr']
-                print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {current_lr:.3e}")
-
-    def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        self.model.train()
-        for epoch in range(epochs):
-            def closure():
-                self.optimizer_lbfgs.zero_grad()
-                loss = self.compute_loss(
-                    points_tensor, reluctivity_tensor, 
-                    current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
-                )
-                loss.backward(retain_graph=True)
-                return loss
-            
-            loss_val = self.optimizer_lbfgs.step(closure)
-            print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
-"""
+    test_simulation_file_path = os.path.join(project_root_directory, 'test_simulation.py')
 
     electro_magnetic_pinn_source_code = """import torch
 from pinn_architecture import PINNArchitecture
@@ -151,7 +18,6 @@ class ElectroMagneticPINN:
         self.geometry_engine_instance = geometry_engine_instance
         self.collocation_sampler_instance = collocation_sampler_instance
         
-        # PINNArchitecture tự động xử lý Dirichlet Boundary Condition dựa vào domain_scale
         self.pinn_architecture_instance = PINNArchitecture(domain_scale=self.collocation_sampler_instance.x_maximum)
         self.maxwell_pde_loss_instance = MaxwellPDELoss()
         
@@ -174,7 +40,6 @@ class ElectroMagneticPINN:
         
         physical_properties_dictionary = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
         
-        # [CẬP NHẬT]: Dừng việc đưa SDF vào quá trình huấn luyện
         self.curriculum_training_manager_instance.train_source_ramping(
             stages=stages,
             epochs_per_stage=epochs_per_stage,
@@ -188,21 +53,144 @@ class ElectroMagneticPINN:
 
     def predict_magnetic_vector_potential(self, points_tensor):
         self.pinn_architecture_instance.eval()
-        
         with torch.no_grad():
             magnetic_vector_potential_z_tensor = self.pinn_architecture_instance(points_tensor)
-            
         return magnetic_vector_potential_z_tensor
+
+    def evaluate_fields(self, points_tensor):
+        self.pinn_architecture_instance.eval()
+        points_tensor.requires_grad_(True)
+        
+        A_z = self.pinn_architecture_instance(points_tensor)
+        
+        grad_A = torch.autograd.grad(
+            outputs=A_z,
+            inputs=points_tensor,
+            grad_outputs=torch.ones_like(A_z),
+            create_graph=False,
+            retain_graph=False
+        )[0]
+        
+        B_x = grad_A[:, 1:2]
+        B_y = -grad_A[:, 0:1]
+        
+        return A_z.detach(), B_x.detach(), B_y.detach()
 """
 
-    with open(pinn_architecture_file_path, 'w', encoding='utf-8') as f:
-        f.write(pinn_architecture_source_code)
-    with open(training_manager_file_path, 'w', encoding='utf-8') as f:
-        f.write(training_manager_source_code)
-    with open(electro_magnetic_pinn_file_path, 'w', encoding='utf-8') as f:
-        f.write(electro_magnetic_pinn_source_code)
-        
-    print("Đã vá lỗi Điều kiện biên (Dirichlet Boundary Conditions) thành công!")
+    test_simulation_source_code = """import os
+import sys
+
+current_directory = os.path.dirname(os.path.abspath(__file__))
+if current_directory not in sys.path:
+    sys.path.insert(0, current_directory)
+
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from geometry_engine.geometry import Geometry
+from geometry_engine.segment.segment import Segment
+from physics_domain.collocation_sampler import CollocationSampler
+from electro_magnetic_pinn import ElectroMagneticPINN
+
+def main():
+    geometry_instance = Geometry()
+    
+    top_magnet_vertices = [
+        [-0.03, 0.015],
+        [0.03, 0.015],
+        [0.03, 0.025],
+        [-0.03, 0.025]
+    ]
+    top_magnet = Segment(top_magnet_vertices).set_material_properties(
+        name="top_magnet",
+        relative_permeability=1.05,
+        coercive_field_x=800000.0,
+        coercive_field_y=0.0
+    )
+    geometry_instance.add_segment(top_magnet)
+
+    bottom_magnet_vertices = [
+        [-0.03, -0.025],
+        [0.03, -0.025],
+        [0.03, -0.015],
+        [-0.03, -0.015]
+    ]
+    bottom_magnet = Segment(bottom_magnet_vertices).set_material_properties(
+        name="bottom_magnet",
+        relative_permeability=1.05,
+        coercive_field_x=-800000.0,
+        coercive_field_y=0.0
+    )
+    geometry_instance.add_segment(bottom_magnet)
+    
+    collocation_sampler_instance = CollocationSampler(
+        x_boundaries_tuple=(-0.05, 0.05),
+        y_boundaries_tuple=(-0.05, 0.05)
+    )
+
+    geometry_instance.plot_problem_definition(
+        x_boundaries_tuple=(-0.05, 0.05),
+        y_boundaries_tuple=(-0.05, 0.05),
+        resolution=100
+    )
+
+    model = ElectroMagneticPINN(
+        geometry_engine_instance=geometry_instance,
+        collocation_sampler_instance=collocation_sampler_instance
+    )
+    
+    model.execute_training_process(
+        number_of_uniform_points=2500,
+        number_of_interface_points=800,
+        distance_threshold=0.005,
+        stages=2,
+        epochs_per_stage=400
+    )
+    
+    # [CẬP NHẬT]: Trực quan hóa kết quả sau huấn luyện (Post-training plots)
+    resolution = 120
+    x_coords = np.linspace(-0.05, 0.05, resolution)
+    y_coords = np.linspace(-0.05, 0.05, resolution)
+    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
+    
+    xy_points_tensor = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
+    
+    A_z_pred, B_x_pred, B_y_pred = model.evaluate_fields(xy_points_tensor)
+    
+    A_z_grid = A_z_pred.numpy().reshape(resolution, resolution)
+    B_x_grid = B_x_pred.numpy().reshape(resolution, resolution)
+    B_y_grid = B_y_pred.numpy().reshape(resolution, resolution)
+    B_mag_grid = np.sqrt(B_x_grid**2 + B_y_grid**2)
+    
+    fig, axs = plt.subplots(1, 2, figsize=(14, 6))
+    
+    contour_az = axs[0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
+    fig.colorbar(contour_az, ax=axs[0], label="A_z (Wb/m)")
+    axs[0].set_title("Magnetic Vector Potential (A_z)")
+    axs[0].set_xlabel("x (m)")
+    axs[0].set_ylabel("y (m)")
+    axs[0].axis("equal")
+    
+    contour_b = axs[1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="jet")
+    fig.colorbar(contour_b, ax=axs[1], label="|B| (T)")
+    axs[1].set_title("Magnetic Flux Density Magnitude (|B|)")
+    axs[1].set_xlabel("x (m)")
+    axs[1].set_ylabel("y (m)")
+    axs[1].axis("equal")
+    
+    plt.tight_layout()
+    plt.show()
 
 if __name__ == '__main__':
-    fix_boundary_conditions()
+    main()
+"""
+
+    with open(electro_magnetic_pinn_file_path, 'w', encoding='utf-8') as f:
+        f.write(electro_magnetic_pinn_source_code)
+    with open(test_simulation_file_path, 'w', encoding='utf-8') as f:
+        f.write(test_simulation_source_code)
+        
+    print("Đã tích hợp module phân tích và vẽ đồ thị từ trường thành công!")
+
+if __name__ == '__main__':
+    add_post_training_plots()

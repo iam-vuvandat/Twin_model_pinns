@@ -20,8 +20,9 @@ class TrainingManager:
             line_search_fn="strong_wolfe"
         )
 
-    def compute_loss(self, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        magnetic_vector_potential_z_tensor = self.model(points_tensor, signed_distance_field_tensor)
+    def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+        # [CẬP NHẬT]: Không còn truyền signed_distance_field_tensor vào mạng model
+        magnetic_vector_potential_z_tensor = self.model(points_tensor)
         
         residual = self.pde_evaluator.compute_residual(
             xy=points_tensor,
@@ -36,7 +37,7 @@ class TrainingManager:
         loss_pde = torch.mean(residual_scaled**2)
         return loss_pde
 
-    def train_adam(self, epochs, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+    def train_adam(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         self.model.train()
         best_loss = float('inf')
         best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
@@ -47,7 +48,7 @@ class TrainingManager:
             self.optimizer_adam.zero_grad()
             
             loss = self.compute_loss(
-                points_tensor, signed_distance_field_tensor, reluctivity_tensor, 
+                points_tensor, reluctivity_tensor, 
                 current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
             )
             
@@ -71,13 +72,13 @@ class TrainingManager:
                 current_lr = self.optimizer_adam.param_groups[0]['lr']
                 print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {current_lr:.3e}")
 
-    def train_lbfgs(self, epochs, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+    def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         self.model.train()
         for epoch in range(epochs):
             def closure():
                 self.optimizer_lbfgs.zero_grad()
                 loss = self.compute_loss(
-                    points_tensor, signed_distance_field_tensor, reluctivity_tensor, 
+                    points_tensor, reluctivity_tensor, 
                     current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
                 )
                 loss.backward(retain_graph=True)
