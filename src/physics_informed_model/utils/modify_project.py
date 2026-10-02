@@ -280,6 +280,49 @@ class CollocationSampler:
         return combined_points_tensor
 """
 
+    maxwell_pde_loss_source_code = """import torch
+
+class MaxwellPDELoss:
+    def __init__(self):
+        pass
+
+    def compute_residual(self, xy, A_z, nu, J_z, H_cx, H_cy):
+        grad_A = torch.autograd.grad(
+            outputs=A_z,
+            inputs=xy,
+            grad_outputs=torch.ones_like(A_z),
+            create_graph=True,
+            retain_graph=True
+        )[0]
+        
+        dAz_dx = grad_A[:, 0:1]
+        dAz_dy = grad_A[:, 1:2]
+        
+        H_x = nu * dAz_dy - H_cx
+        H_y = -nu * dAz_dx - H_cy
+        
+        grad_Hx = torch.autograd.grad(
+            outputs=H_x,
+            inputs=xy,
+            grad_outputs=torch.ones_like(H_x),
+            create_graph=True,
+            retain_graph=True
+        )[0]
+        dHx_dy = grad_Hx[:, 1:2]
+        
+        grad_Hy = torch.autograd.grad(
+            outputs=H_y,
+            inputs=xy,
+            grad_outputs=torch.ones_like(H_y),
+            create_graph=True,
+            retain_graph=True
+        )[0]
+        dHy_dx = grad_Hy[:, 0:1]
+        
+        residual = dHy_dx - dHx_dy - J_z
+        return residual
+"""
+
     with open(segment_init_file_path, 'w', encoding='utf-8') as segment_init_file_object:
         segment_init_file_object.write(init_source_code)
 
@@ -301,7 +344,10 @@ class CollocationSampler:
     with open(collocation_sampler_file_path, 'w', encoding='utf-8') as collocation_sampler_file_object:
         collocation_sampler_file_object.write(collocation_sampler_source_code)
 
-    for empty_file_path in [maxwell_pde_loss_file_path, electro_magnetic_pinn_file_path, pinn_architecture_file_path, training_manager_file_path, curriculum_training_manager_file_path]:
+    with open(maxwell_pde_loss_file_path, 'w', encoding='utf-8') as maxwell_pde_loss_file_object:
+        maxwell_pde_loss_file_object.write(maxwell_pde_loss_source_code)
+
+    for empty_file_path in [electro_magnetic_pinn_file_path, pinn_architecture_file_path, training_manager_file_path, curriculum_training_manager_file_path]:
         if not os.path.exists(empty_file_path):
             with open(empty_file_path, 'w', encoding='utf-8') as f:
                 pass
