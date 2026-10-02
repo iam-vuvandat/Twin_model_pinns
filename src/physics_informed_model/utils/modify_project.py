@@ -353,10 +353,9 @@ class PINNArchitecture(nn.Module):
 import torch.optim as optim
 
 class TrainingManager:
-    def __init__(self, model, pde_evaluator, material_mapping, lr_adam=1e-3):
+    def __init__(self, model, pde_evaluator, lr_adam=1e-3):
         self.model = model
         self.pde_evaluator = pde_evaluator
-        self.material_mapping = material_mapping
         
         self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
         
@@ -371,43 +370,47 @@ class TrainingManager:
             line_search_fn="strong_wolfe"
         )
 
-    def compute_loss(self, xy, sdf_boundary, iron_mask, magnet_mask, slot_masks_dict, slot_current_dict, H_cx, H_cy):
-        A_z = self.model(xy, sdf_boundary)
+    def compute_loss(self, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+        magnetic_vector_potential_z_tensor = self.model(points_tensor, signed_distance_field_tensor)
         
-        nu = self.material_mapping.get_reluctivity(iron_mask, magnet_mask)
-        J_z = self.material_mapping.get_current_density(xy, slot_masks_dict, slot_current_dict)
-        
-        residual = self.pde_evaluator.compute_residual(xy, A_z, nu, J_z, H_cx, H_cy)
+        residual = self.pde_evaluator.compute_residual(
+            xy=points_tensor,
+            A_z=magnetic_vector_potential_z_tensor,
+            nu=reluctivity_tensor,
+            J_z=current_density_z_tensor,
+            H_cx=coercive_field_x_tensor,
+            H_cy=coercive_field_y_tensor
+        )
         
         loss_pde = torch.mean(residual**2)
         return loss_pde
 
-    def train_adam(self, epochs, xy, sdf_boundary, iron_mask, magnet_mask, slot_masks_dict, slot_current_dict, H_cx, H_cy):
+    def train_adam(self, epochs, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         self.model.train()
         for epoch in range(epochs):
             self.optimizer_adam.zero_grad()
             
             loss = self.compute_loss(
-                xy, sdf_boundary, iron_mask, magnet_mask, 
-                slot_masks_dict, slot_current_dict, H_cx, H_cy
+                points_tensor, signed_distance_field_tensor, reluctivity_tensor, 
+                current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
             )
             
-            loss.backward()
+            loss.backward(retain_graph=True)
             self.optimizer_adam.step()
             
             if (epoch + 1) % 100 == 0:
                 print(f"Adam Epoch {epoch + 1}: Loss = {loss.item():.6e}")
 
-    def train_lbfgs(self, epochs, xy, sdf_boundary, iron_mask, magnet_mask, slot_masks_dict, slot_current_dict, H_cx, H_cy):
+    def train_lbfgs(self, epochs, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         self.model.train()
         for epoch in range(epochs):
             def closure():
                 self.optimizer_lbfgs.zero_grad()
                 loss = self.compute_loss(
-                    xy, sdf_boundary, iron_mask, magnet_mask, 
-                    slot_masks_dict, slot_current_dict, H_cx, H_cy
+                    points_tensor, signed_distance_field_tensor, reluctivity_tensor, 
+                    current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
                 )
-                loss.backward()
+                loss.backward(retain_graph=True)
                 return loss
             
             self.optimizer_lbfgs.step(closure)
@@ -417,44 +420,98 @@ class TrainingManager:
 """
 
     curriculum_training_manager_source_code = """import torch
-from .training_manager import TrainingManager
+from training_manager import TrainingManager
 
 class CurriculumTrainingManager:
-    def __init__(self, training_manager: TrainingManager):
-        self.training_manager = training_manager
+    def __init__(self, training_manager_instance: TrainingManager):
+        self.training_manager_instance = training_manager_instance
 
-    def train_source_ramping(self, stages, epochs_per_stage, xy, sdf_boundary, iron_mask, magnet_mask, slot_masks_dict, slot_current_dict, H_cx, H_cy):
+    def train_source_ramping(self, stages, epochs_per_stage, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         for stage in range(1, stages + 1):
             alpha = stage / stages
             
-            current_dict_scaled = {k: v * alpha for k, v in slot_current_dict.items()}
-            H_cx_scaled = H_cx * alpha
-            H_cy_scaled = H_cy * alpha
+            current_density_z_tensor_scaled = current_density_z_tensor * alpha
+            coercive_field_x_tensor_scaled = coercive_field_x_tensor * alpha
+            coercive_field_y_tensor_scaled = coercive_field_y_tensor * alpha
             
             print(f"--- Curriculum Stage {stage}/{stages} (Alpha = {alpha:.2f}) ---")
             
-            self.training_manager.train_adam(
-                epochs_per_stage, xy, sdf_boundary, iron_mask, magnet_mask, 
-                slot_masks_dict, current_dict_scaled, H_cx_scaled, H_cy_scaled
+            self.training_manager_instance.train_adam(
+                epochs=epochs_per_stage,
+                points_tensor=points_tensor,
+                signed_distance_field_tensor=signed_distance_field_tensor,
+                reluctivity_tensor=reluctivity_tensor,
+                current_density_z_tensor=current_density_z_tensor_scaled,
+                coercive_field_x_tensor=coercive_field_x_tensor_scaled,
+                coercive_field_y_tensor=coercive_field_y_tensor_scaled
             )
             
         print("--- Curriculum L-BFGS Refinement (Alpha = 1.00) ---")
         
-        self.training_manager.train_lbfgs(
+        self.training_manager_instance.train_lbfgs(
             epochs=100, 
-            xy=xy, 
-            sdf_boundary=sdf_boundary, 
-            iron_mask=iron_mask, 
-            magnet_mask=magnet_mask, 
-            slot_masks_dict=slot_masks_dict, 
-            slot_current_dict=slot_current_dict, 
-            H_cx=H_cx, 
-            H_cy=H_cy
+            points_tensor=points_tensor, 
+            signed_distance_field_tensor=signed_distance_field_tensor, 
+            reluctivity_tensor=reluctivity_tensor, 
+            current_density_z_tensor=current_density_z_tensor, 
+            coercive_field_x_tensor=coercive_field_x_tensor, 
+            coercive_field_y_tensor=coercive_field_y_tensor
         )
 """
 
-    electro_magnetic_pinn_source_code = """class ElectroMagneticPINN:
-    pass
+    electro_magnetic_pinn_source_code = """import torch
+from pinn_architecture import PINNArchitecture
+from training_manager import TrainingManager
+from curriculum_training_manager import CurriculumTrainingManager
+from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
+
+class ElectroMagneticPINN:
+    def __init__(self, geometry_engine_instance, collocation_sampler_instance):
+        self.geometry_engine_instance = geometry_engine_instance
+        self.collocation_sampler_instance = collocation_sampler_instance
+        
+        self.pinn_architecture_instance = PINNArchitecture()
+        self.maxwell_pde_loss_instance = MaxwellPDELoss()
+        
+        self.training_manager_instance = TrainingManager(
+            model=self.pinn_architecture_instance,
+            pde_evaluator=self.maxwell_pde_loss_instance
+        )
+        
+        self.curriculum_training_manager_instance = CurriculumTrainingManager(
+            training_manager_instance=self.training_manager_instance
+        )
+
+    def execute_training_process(self, number_of_uniform_points, number_of_interface_points, distance_threshold, stages, epochs_per_stage):
+        points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
+            geometry_object=self.geometry_engine_instance,
+            number_of_uniform_points=number_of_uniform_points,
+            number_of_interface_points=number_of_interface_points,
+            distance_threshold=distance_threshold
+        )
+        
+        signed_distance_field_tensor = self.geometry_engine_instance.compute_global_signed_distance_field(points_tensor)
+        physical_properties_dictionary = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
+        
+        self.curriculum_training_manager_instance.train_source_ramping(
+            stages=stages,
+            epochs_per_stage=epochs_per_stage,
+            points_tensor=points_tensor,
+            signed_distance_field_tensor=signed_distance_field_tensor,
+            reluctivity_tensor=physical_properties_dictionary["reluctivity"],
+            current_density_z_tensor=physical_properties_dictionary["current_density_z"],
+            coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
+            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
+        )
+
+    def predict_magnetic_vector_potential(self, points_tensor):
+        self.pinn_architecture_instance.eval()
+        signed_distance_field_tensor = self.geometry_engine_instance.compute_global_signed_distance_field(points_tensor)
+        
+        with torch.no_grad():
+            magnetic_vector_potential_z_tensor = self.pinn_architecture_instance(points_tensor, signed_distance_field_tensor)
+            
+        return magnetic_vector_potential_z_tensor
 """
 
     with open(segment_init_file_path, 'w', encoding='utf-8') as segment_init_file_object:
