@@ -42,6 +42,7 @@ def modify_project_structure():
     pinn_architecture_file_path = os.path.join(project_root_directory, 'pinn_architecture.py')
     training_manager_file_path = os.path.join(project_root_directory, 'training_manager.py')
     curriculum_training_manager_file_path = os.path.join(project_root_directory, 'curriculum_training_manager.py')
+    test_simulation_file_path = os.path.join(project_root_directory, 'test_simulation.py')
 
     init_source_code = ""
 
@@ -540,6 +541,54 @@ class ElectroMagneticPINN:
         return magnetic_vector_potential_z_tensor
 """
 
+    test_simulation_source_code = """import torch
+from geometry_engine.geometry import Geometry
+from geometry_engine.segment.segment import Segment
+from physics_domain.collocation_sampler import CollocationSampler
+from electro_magnetic_pinn import ElectroMagneticPINN
+
+def main():
+    geometry_instance = Geometry()
+    
+    core_vertices = [
+        [-0.02, -0.02],
+        [0.02, -0.02],
+        [0.02, 0.02],
+        [-0.02, 0.02]
+    ]
+    iron_segment = Segment(core_vertices).set_material_properties(
+        name="iron_core",
+        relative_permeability=1000.0,
+        current_density_z_axis=0.0
+    )
+    geometry_instance.add_segment(iron_segment)
+    
+    collocation_sampler_instance = CollocationSampler(
+        x_boundaries_tuple=(-0.05, 0.05),
+        y_boundaries_tuple=(-0.05, 0.05)
+    )
+    
+    model = ElectroMagneticPINN(
+        geometry_engine_instance=geometry_instance,
+        collocation_sampler_instance=collocation_sampler_instance
+    )
+    
+    model.execute_training_process(
+        number_of_uniform_points=200,
+        number_of_interface_points=50,
+        distance_threshold=0.005,
+        stages=2,
+        epochs_per_stage=5
+    )
+    
+    test_points = collocation_sampler_instance.generate_uniform_points_tensor(10)
+    predictions = model.predict_magnetic_vector_potential(test_points)
+    print("Predicted A_z:", predictions)
+
+if __name__ == '__main__':
+    main()
+"""
+
     with open(segment_init_file_path, 'w', encoding='utf-8') as segment_init_file_object:
         segment_init_file_object.write(init_source_code)
 
@@ -575,6 +624,9 @@ class ElectroMagneticPINN:
 
     with open(electro_magnetic_pinn_file_path, 'w', encoding='utf-8') as electro_magnetic_pinn_file_object:
         electro_magnetic_pinn_file_object.write(electro_magnetic_pinn_source_code)
+
+    with open(test_simulation_file_path, 'w', encoding='utf-8') as test_simulation_file_object:
+        test_simulation_file_object.write(test_simulation_source_code)
 
 if __name__ == '__main__':
     modify_project_structure()
