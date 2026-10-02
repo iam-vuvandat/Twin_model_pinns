@@ -16,18 +16,37 @@ from electro_magnetic_pinn import ElectroMagneticPINN
 def main():
     geometry_instance = Geometry()
     
-    core_vertices = [
-        [-0.02, -0.02],
-        [0.02, -0.02],
-        [0.02, 0.02],
-        [-0.02, 0.02]
+    # 1. Nam châm chữ I nằm ngang (Phía trên)
+    # Kích thước: Rộng 0.06m, Dày 0.01m. Tâm tại y = 0.02
+    top_magnet_vertices = [
+        [-0.03, 0.015],
+        [0.03, 0.015],
+        [0.03, 0.025],
+        [-0.03, 0.025]
     ]
-    iron_segment = Segment(core_vertices).set_material_properties(
-        name="iron_core",
-        relative_permeability=1000.0,
-        current_density_z_axis=0.0
+    top_magnet = Segment(top_magnet_vertices).set_material_properties(
+        name="top_magnet",
+        relative_permeability=1.05,
+        coercive_field_x=800000.0,  # Từ hóa hướng sang phải (+X)
+        coercive_field_y=0.0
     )
-    geometry_instance.add_segment(iron_segment)
+    geometry_instance.add_segment(top_magnet)
+
+    # 2. Nam châm chữ I nằm ngang (Phía dưới)
+    # Kích thước: Rộng 0.06m, Dày 0.01m. Tâm tại y = -0.02
+    bottom_magnet_vertices = [
+        [-0.03, -0.025],
+        [0.03, -0.025],
+        [0.03, -0.015],
+        [-0.03, -0.015]
+    ]
+    bottom_magnet = Segment(bottom_magnet_vertices).set_material_properties(
+        name="bottom_magnet",
+        relative_permeability=1.05,
+        coercive_field_x=-800000.0, # Từ hóa hướng sang trái (-X)
+        coercive_field_y=0.0
+    )
+    geometry_instance.add_segment(bottom_magnet)
     
     collocation_sampler_instance = CollocationSampler(
         x_boundaries_tuple=(-0.05, 0.05),
@@ -52,9 +71,9 @@ def main():
     plt.colorbar(contour_plot, label="Signed Distance Field (SDF)")
     plt.contour(X_grid, Y_grid, sdf_grid_np, levels=[0.0], colors="black", linewidths=2.5)
     
-    plt.title("Geometry Definition & SDF Contour")
-    plt.xlabel("x position")
-    plt.ylabel("y position")
+    plt.title("Geometry Definition: Two Horizontal Magnets")
+    plt.xlabel("x position (m)")
+    plt.ylabel("y position (m)")
     plt.axis("equal")
     plt.tight_layout()
     plt.show()

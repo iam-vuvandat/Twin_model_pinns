@@ -12,6 +12,7 @@ def modify_project_structure():
     physical_equations_directory = os.path.join(physics_domain_directory, 'physical_equations')
     materials_directory = os.path.join(physics_domain_directory, 'materials')
     
+    # Dọn dẹp cấu trúc cũ
     if os.path.exists(materials_directory):
         shutil.rmtree(materials_directory)
     if os.path.exists(templates_directory):
@@ -26,17 +27,20 @@ def modify_project_structure():
         if os.path.exists(obs_file):
             os.remove(obs_file)
 
+    # Tạo thư mục
     os.makedirs(geometry_engine_directory, exist_ok=True)
     os.makedirs(segment_directory, exist_ok=True)
     os.makedirs(physics_domain_directory, exist_ok=True)
     os.makedirs(physical_equations_directory, exist_ok=True)
 
+    # Đường dẫn tệp
     segment_init_file_path = os.path.join(segment_directory, '__init__.py')
     segment_file_path = os.path.join(segment_directory, 'segment.py')
     polygon_sdf_file_path = os.path.join(segment_directory, 'polygon_signed_distance_field.py')
     
     global_sdf_file_path = os.path.join(geometry_engine_directory, 'global_signed_distance_field.py')
     global_properties_file_path = os.path.join(geometry_engine_directory, 'global_physical_properties_evaluation.py')
+    geometry_visualizer_file_path = os.path.join(geometry_engine_directory, 'geometry_visualizer.py')
     geometry_file_path = os.path.join(geometry_engine_directory, 'geometry.py')
     
     collocation_sampler_file_path = os.path.join(physics_domain_directory, 'collocation_sampler.py')
@@ -247,10 +251,74 @@ def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_rel
     }
 """
 
+    geometry_visualizer_source_code = """import torch
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_geometry_problem(geometry_instance, x_boundaries_tuple, y_boundaries_tuple, resolution=100):
+    x_coords = np.linspace(x_boundaries_tuple[0], x_boundaries_tuple[1], resolution)
+    y_coords = np.linspace(y_boundaries_tuple[0], y_boundaries_tuple[1], resolution)
+    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
+    
+    xy_points_tensor = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
+    
+    sdf_values_tensor = geometry_instance.compute_global_signed_distance_field(xy_points_tensor)
+    physical_properties_dictionary = geometry_instance.evaluate_global_physical_properties(xy_points_tensor)
+    
+    sdf_grid = sdf_values_tensor.numpy().reshape(resolution, resolution)
+    
+    reluctivity_tensor = physical_properties_dictionary["reluctivity"]
+    mu_r_tensor = geometry_instance.vacuum_reluctivity / reluctivity_tensor
+    mu_r_grid = mu_r_tensor.numpy().reshape(resolution, resolution)
+    
+    hx_tensor = physical_properties_dictionary["coercive_field_x"]
+    hy_tensor = physical_properties_dictionary["coercive_field_y"]
+    hc_magnitude_tensor = torch.sqrt(hx_tensor**2 + hy_tensor**2)
+    hc_grid = hc_magnitude_tensor.numpy().reshape(resolution, resolution)
+    
+    jz_tensor = physical_properties_dictionary["current_density_z"]
+    jz_grid = jz_tensor.numpy().reshape(resolution, resolution)
+    
+    fig, axs = plt.subplots(2, 2, figsize=(12, 10))
+    
+    contour_sdf = axs[0, 0].contourf(X_grid, Y_grid, sdf_grid, levels=50, cmap="coolwarm")
+    axs[0, 0].contour(X_grid, Y_grid, sdf_grid, levels=[0.0], colors="black", linewidths=1.5)
+    fig.colorbar(contour_sdf, ax=axs[0, 0])
+    axs[0, 0].set_title("Signed Distance Field (SDF)")
+    axs[0, 0].set_xlabel("x (m)")
+    axs[0, 0].set_ylabel("y (m)")
+    axs[0, 0].set_aspect('equal')
+    
+    contour_mur = axs[0, 1].contourf(X_grid, Y_grid, mu_r_grid, levels=50, cmap="viridis")
+    fig.colorbar(contour_mur, ax=axs[0, 1])
+    axs[0, 1].set_title("Relative Permeability (mu_r)")
+    axs[0, 1].set_xlabel("x (m)")
+    axs[0, 1].set_ylabel("y (m)")
+    axs[0, 1].set_aspect('equal')
+    
+    contour_hc = axs[1, 0].contourf(X_grid, Y_grid, hc_grid, levels=50, cmap="plasma")
+    fig.colorbar(contour_hc, ax=axs[1, 0])
+    axs[1, 0].set_title("Magnetization Magnitude (Hc)")
+    axs[1, 0].set_xlabel("x (m)")
+    axs[1, 0].set_ylabel("y (m)")
+    axs[1, 0].set_aspect('equal')
+    
+    contour_jz = axs[1, 1].contourf(X_grid, Y_grid, jz_grid, levels=50, cmap="inferno")
+    fig.colorbar(contour_jz, ax=axs[1, 1])
+    axs[1, 1].set_title("Current Density (Jz)")
+    axs[1, 1].set_xlabel("x (m)")
+    axs[1, 1].set_ylabel("y (m)")
+    axs[1, 1].set_aspect('equal')
+    
+    plt.tight_layout()
+    plt.show()
+"""
+
     geometry_source_code = """import torch
 from geometry_engine.segment.segment import Segment
 from geometry_engine.global_signed_distance_field import compute_global_signed_distance_field
 from geometry_engine.global_physical_properties_evaluation import evaluate_global_physical_properties
+from geometry_engine.geometry_visualizer import plot_geometry_problem
 
 class Geometry:
     def __init__(self):
@@ -266,6 +334,9 @@ class Geometry:
 
     def evaluate_global_physical_properties(self, points_tensor):
         return evaluate_global_physical_properties(self.segments_list, points_tensor, self.vacuum_reluctivity)
+
+    def plot_problem_definition(self, x_boundaries_tuple, y_boundaries_tuple, resolution=100):
+        plot_geometry_problem(self, x_boundaries_tuple, y_boundaries_tuple, resolution)
 """
 
     collocation_sampler_source_code = """import torch
@@ -587,8 +658,6 @@ if current_directory not in sys.path:
     sys.path.insert(0, current_directory)
 
 import torch
-import numpy as np
-import matplotlib.pyplot as plt
 from geometry_engine.geometry import Geometry
 from geometry_engine.segment.segment import Segment
 from physics_domain.collocation_sampler import CollocationSampler
@@ -597,8 +666,6 @@ from electro_magnetic_pinn import ElectroMagneticPINN
 def main():
     geometry_instance = Geometry()
     
-    # 1. Nam châm chữ I nằm ngang (Phía trên)
-    # Kích thước: Rộng 0.06m, Dày 0.01m. Tâm tại y = 0.02
     top_magnet_vertices = [
         [-0.03, 0.015],
         [0.03, 0.015],
@@ -608,13 +675,11 @@ def main():
     top_magnet = Segment(top_magnet_vertices).set_material_properties(
         name="top_magnet",
         relative_permeability=1.05,
-        coercive_field_x=800000.0,  # Từ hóa hướng sang phải (+X)
+        coercive_field_x=800000.0,
         coercive_field_y=0.0
     )
     geometry_instance.add_segment(top_magnet)
 
-    # 2. Nam châm chữ I nằm ngang (Phía dưới)
-    # Kích thước: Rộng 0.06m, Dày 0.01m. Tâm tại y = -0.02
     bottom_magnet_vertices = [
         [-0.03, -0.025],
         [0.03, -0.025],
@@ -624,7 +689,7 @@ def main():
     bottom_magnet = Segment(bottom_magnet_vertices).set_material_properties(
         name="bottom_magnet",
         relative_permeability=1.05,
-        coercive_field_x=-800000.0, # Từ hóa hướng sang trái (-X)
+        coercive_field_x=-800000.0,
         coercive_field_y=0.0
     )
     geometry_instance.add_segment(bottom_magnet)
@@ -634,31 +699,12 @@ def main():
         y_boundaries_tuple=(-0.05, 0.05)
     )
     
-    # ---------------------------------------------------------
-    # TRỰC QUAN HÓA HÌNH HỌC TRƯỚC KHI HUẤN LUYỆN
-    # ---------------------------------------------------------
-    resolution = 100
-    x_coords = np.linspace(-0.05, 0.05, resolution)
-    y_coords = np.linspace(-0.05, 0.05, resolution)
-    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
-    
-    xy_points_tensor = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
-    sdf_values_tensor = geometry_instance.compute_global_signed_distance_field(xy_points_tensor)
-    
-    sdf_grid_np = sdf_values_tensor.numpy().reshape(resolution, resolution)
-    
-    plt.figure(figsize=(7, 6))
-    contour_plot = plt.contourf(X_grid, Y_grid, sdf_grid_np, levels=50, cmap="coolwarm")
-    plt.colorbar(contour_plot, label="Signed Distance Field (SDF)")
-    plt.contour(X_grid, Y_grid, sdf_grid_np, levels=[0.0], colors="black", linewidths=2.5)
-    
-    plt.title("Geometry Definition: Two Horizontal Magnets")
-    plt.xlabel("x position (m)")
-    plt.ylabel("y position (m)")
-    plt.axis("equal")
-    plt.tight_layout()
-    plt.show()
-    # ---------------------------------------------------------
+    # Kêu gọi hàm hiển thị đã được tích hợp trong lớp Geometry
+    geometry_instance.plot_problem_definition(
+        x_boundaries_tuple=(-0.05, 0.05),
+        y_boundaries_tuple=(-0.05, 0.05),
+        resolution=100
+    )
 
     model = ElectroMagneticPINN(
         geometry_engine_instance=geometry_instance,
@@ -695,6 +741,9 @@ if __name__ == '__main__':
         
     with open(global_properties_file_path, 'w', encoding='utf-8') as global_properties_file_object:
         global_properties_file_object.write(global_properties_source_code)
+        
+    with open(geometry_visualizer_file_path, 'w', encoding='utf-8') as geometry_visualizer_file_object:
+        geometry_visualizer_file_object.write(geometry_visualizer_source_code)
         
     with open(geometry_file_path, 'w', encoding='utf-8') as geometry_file_object:
         geometry_file_object.write(geometry_source_code)
