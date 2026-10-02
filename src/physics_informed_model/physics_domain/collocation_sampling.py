@@ -1,41 +1,45 @@
 import torch
 
 class CollocationSampler:
-    def __init__(self, x_bounds, y_bounds):
-        self.x_min, self.x_max = x_bounds
-        self.y_min, self.y_max = y_bounds
+    def __init__(self, x_boundaries_tuple, y_boundaries_tuple):
+        self.x_minimum = x_boundaries_tuple[0]
+        self.x_maximum = x_boundaries_tuple[1]
+        self.y_minimum = y_boundaries_tuple[0]
+        self.y_maximum = y_boundaries_tuple[1]
 
-    def generate_uniform_points(self, num_points):
-        xy = torch.rand((num_points, 2))
-        xy[:, 0] = xy[:, 0] * (self.x_max - self.x_min) + self.x_min
-        xy[:, 1] = xy[:, 1] * (self.y_max - self.y_min) + self.y_min
-        xy.requires_grad_(True)
-        return xy
+    def generate_uniform_points_tensor(self, number_of_points):
+        points_tensor = torch.rand((number_of_points, 2), dtype=torch.float32)
+        points_tensor[:, 0] = points_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
+        points_tensor[:, 1] = points_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
+        points_tensor.requires_grad_(True)
+        return points_tensor
 
-    def generate_interface_points(self, geometry, num_points, epsilon):
-        pool_size = num_points * 20
-        xy_pool = torch.rand((pool_size, 2))
-        xy_pool[:, 0] = xy_pool[:, 0] * (self.x_max - self.x_min) + self.x_min
-        xy_pool[:, 1] = xy_pool[:, 1] * (self.y_max - self.y_min) + self.y_min
+    def generate_interface_points_tensor(self, geometry_object, number_of_points, distance_threshold):
+        pool_size_value = number_of_points * 20
+        points_pool_tensor = torch.rand((pool_size_value, 2), dtype=torch.float32)
+        points_pool_tensor[:, 0] = points_pool_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
+        points_pool_tensor[:, 1] = points_pool_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
         
-        sdf_vals = geometry.compute_sdf(xy_pool)
+        signed_distance_field_tensor = geometry_object.compute_global_signed_distance_field(points_pool_tensor)
         
-        mask = torch.abs(sdf_vals) < epsilon
-        xy_interface = xy_pool[mask]
+        mask_tensor = torch.abs(signed_distance_field_tensor) < distance_threshold
+        mask_tensor_one_dimensional = mask_tensor.squeeze()
         
-        if xy_interface.shape[0] > num_points:
-            xy_interface = xy_interface[:num_points, :]
+        interface_points_tensor = points_pool_tensor[mask_tensor_one_dimensional]
+        
+        if interface_points_tensor.shape[0] > number_of_points:
+            interface_points_tensor = interface_points_tensor[:number_of_points, :]
             
-        xy_interface = xy_interface.detach().clone()
-        xy_interface.requires_grad_(True)
-        return xy_interface
+        interface_points_tensor = interface_points_tensor.detach().clone()
+        interface_points_tensor.requires_grad_(True)
+        return interface_points_tensor
 
-    def generate_combined_points(self, geometry, num_uniform, num_interface, epsilon):
-        xy_uniform = self.generate_uniform_points(num_uniform)
-        xy_interface = self.generate_interface_points(geometry, num_interface, epsilon)
+    def generate_combined_points_tensor(self, geometry_object, number_of_uniform_points, number_of_interface_points, distance_threshold):
+        uniform_points_tensor = self.generate_uniform_points_tensor(number_of_uniform_points)
+        interface_points_tensor = self.generate_interface_points_tensor(geometry_object, number_of_interface_points, distance_threshold)
         
-        xy_combined = torch.cat([xy_uniform, xy_interface], dim=0)
+        combined_points_tensor = torch.cat([uniform_points_tensor, interface_points_tensor], dim=0)
         
-        xy_combined = xy_combined.detach().clone()
-        xy_combined.requires_grad_(True)
-        return xy_combined
+        combined_points_tensor = combined_points_tensor.detach().clone()
+        combined_points_tensor.requires_grad_(True)
+        return combined_points_tensor

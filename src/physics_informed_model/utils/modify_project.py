@@ -1,15 +1,31 @@
 import os
+import shutil
 
 def modify_project_structure():
     base_directory = os.path.dirname(os.path.abspath(__file__))
+    project_root_directory = os.path.abspath(os.path.join(base_directory, '..'))
     
-    geometry_engine_directory = os.path.abspath(os.path.join(base_directory, '..', 'geometry_engine'))
+    geometry_engine_directory = os.path.join(project_root_directory, 'geometry_engine')
     segment_directory = os.path.join(geometry_engine_directory, 'segment')
-    physics_domain_directory = os.path.abspath(os.path.join(base_directory, '..', 'physics_domain'))
+    physics_domain_directory = os.path.join(project_root_directory, 'physics_domain')
+    physical_equations_directory = os.path.join(physics_domain_directory, 'physical_equations')
+    materials_directory = os.path.join(physics_domain_directory, 'materials')
     
+    if os.path.exists(materials_directory):
+        shutil.rmtree(materials_directory)
+        
+    old_collocation_file = os.path.join(physics_domain_directory, 'collocation_sampling.py')
+    if os.path.exists(old_collocation_file):
+        os.remove(old_collocation_file)
+        
+    old_pnn_file = os.path.join(project_root_directory, 'physics_neural_network.py')
+    if os.path.exists(old_pnn_file):
+        os.remove(old_pnn_file)
+
     os.makedirs(geometry_engine_directory, exist_ok=True)
     os.makedirs(segment_directory, exist_ok=True)
     os.makedirs(physics_domain_directory, exist_ok=True)
+    os.makedirs(physical_equations_directory, exist_ok=True)
 
     segment_init_file_path = os.path.join(segment_directory, '__init__.py')
     segment_file_path = os.path.join(segment_directory, 'segment.py')
@@ -19,7 +35,13 @@ def modify_project_structure():
     global_properties_file_path = os.path.join(geometry_engine_directory, 'global_physical_properties_evaluation.py')
     geometry_file_path = os.path.join(geometry_engine_directory, 'geometry.py')
     
-    collocation_sampling_file_path = os.path.join(physics_domain_directory, 'collocation_sampling.py')
+    collocation_sampler_file_path = os.path.join(physics_domain_directory, 'collocation_sampler.py')
+    maxwell_pde_loss_file_path = os.path.join(physical_equations_directory, 'maxwell_pde_loss.py')
+    
+    electro_magnetic_pinn_file_path = os.path.join(project_root_directory, 'electro_magnetic_pinn.py')
+    pinn_architecture_file_path = os.path.join(project_root_directory, 'pinn_architecture.py')
+    training_manager_file_path = os.path.join(project_root_directory, 'training_manager.py')
+    curriculum_training_manager_file_path = os.path.join(project_root_directory, 'curriculum_training_manager.py')
 
     init_source_code = ""
 
@@ -211,7 +233,7 @@ class Geometry:
         return evaluate_global_physical_properties(self.segments_list, points_tensor, self.vacuum_reluctivity)
 """
 
-    collocation_sampling_source_code = """import torch
+    collocation_sampler_source_code = """import torch
 
 class CollocationSampler:
     def __init__(self, x_boundaries_tuple, y_boundaries_tuple):
@@ -276,8 +298,13 @@ class CollocationSampler:
     with open(geometry_file_path, 'w', encoding='utf-8') as geometry_file_object:
         geometry_file_object.write(geometry_source_code)
 
-    with open(collocation_sampling_file_path, 'w', encoding='utf-8') as collocation_sampling_file_object:
-        collocation_sampling_file_object.write(collocation_sampling_source_code)
+    with open(collocation_sampler_file_path, 'w', encoding='utf-8') as collocation_sampler_file_object:
+        collocation_sampler_file_object.write(collocation_sampler_source_code)
+
+    for empty_file_path in [maxwell_pde_loss_file_path, electro_magnetic_pinn_file_path, pinn_architecture_file_path, training_manager_file_path, curriculum_training_manager_file_path]:
+        if not os.path.exists(empty_file_path):
+            with open(empty_file_path, 'w', encoding='utf-8') as f:
+                pass
 
 if __name__ == '__main__':
     modify_project_structure()
