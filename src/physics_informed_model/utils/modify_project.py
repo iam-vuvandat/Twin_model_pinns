@@ -453,6 +453,10 @@ class CurriculumTrainingManager:
         )
 """
 
+    electro_magnetic_pinn_source_code = """class ElectroMagneticPINN:
+    pass
+"""
+
     with open(segment_init_file_path, 'w', encoding='utf-8') as segment_init_file_object:
         segment_init_file_object.write(init_source_code)
 
@@ -486,10 +490,8 @@ class CurriculumTrainingManager:
     with open(curriculum_training_manager_file_path, 'w', encoding='utf-8') as curriculum_training_manager_file_object:
         curriculum_training_manager_file_object.write(curriculum_training_manager_source_code)
 
-    for empty_file_path in [electro_magnetic_pinn_file_path]:
-        if not os.path.exists(empty_file_path):
-            with open(empty_file_path, 'w', encoding='utf-8') as f:
-                pass
+    with open(electro_magnetic_pinn_file_path, 'w', encoding='utf-8') as electro_magnetic_pinn_file_object:
+        electro_magnetic_pinn_file_object.write(electro_magnetic_pinn_source_code)
 
 if __name__ == '__main__':
     modify_project_structure()
