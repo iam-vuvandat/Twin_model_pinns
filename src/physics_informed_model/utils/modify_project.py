@@ -323,6 +323,32 @@ class MaxwellPDELoss:
         return residual
 """
 
+    pinn_architecture_source_code = """import torch
+import torch.nn as nn
+
+class PINNArchitecture(nn.Module):
+    def __init__(self, input_dim=2, hidden_layers=4, hidden_neurons=50, output_dim=1):
+        super().__init__()
+        
+        layers = []
+        layers.append(nn.Linear(input_dim, hidden_neurons))
+        layers.append(nn.Tanh())
+        
+        for _ in range(hidden_layers - 1):
+            layers.append(nn.Linear(hidden_neurons, hidden_neurons))
+            layers.append(nn.Tanh())
+            
+        layers.append(nn.Linear(hidden_neurons, output_dim))
+        
+        self.network = nn.Sequential(*layers)
+
+    def forward(self, xy, sdf_boundary):
+        raw_output = self.network(xy)
+        
+        A_z = raw_output * sdf_boundary
+        return A_z
+"""
+
     with open(segment_init_file_path, 'w', encoding='utf-8') as segment_init_file_object:
         segment_init_file_object.write(init_source_code)
 
@@ -346,8 +372,11 @@ class MaxwellPDELoss:
 
     with open(maxwell_pde_loss_file_path, 'w', encoding='utf-8') as maxwell_pde_loss_file_object:
         maxwell_pde_loss_file_object.write(maxwell_pde_loss_source_code)
+        
+    with open(pinn_architecture_file_path, 'w', encoding='utf-8') as pinn_architecture_file_object:
+        pinn_architecture_file_object.write(pinn_architecture_source_code)
 
-    for empty_file_path in [electro_magnetic_pinn_file_path, pinn_architecture_file_path, training_manager_file_path, curriculum_training_manager_file_path]:
+    for empty_file_path in [electro_magnetic_pinn_file_path, training_manager_file_path, curriculum_training_manager_file_path]:
         if not os.path.exists(empty_file_path):
             with open(empty_file_path, 'w', encoding='utf-8') as f:
                 pass
