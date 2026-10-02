@@ -2,9 +2,10 @@ import torch
 import torch.optim as optim
 
 class TrainingManager:
-    def __init__(self, model, pde_evaluator, lr_adam=1e-3):
+    def __init__(self, model, pde_evaluator, lr_adam=1e-3, loss_scaling_factor=1e-6):
         self.model = model
         self.pde_evaluator = pde_evaluator
+        self.loss_scaling_factor = loss_scaling_factor
         
         self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
         
@@ -31,12 +32,17 @@ class TrainingManager:
             H_cy=coercive_field_y_tensor
         )
         
-        residual_scaled = residual * 1e-6
+        residual_scaled = residual * self.loss_scaling_factor
         loss_pde = torch.mean(residual_scaled**2)
         return loss_pde
 
     def train_adam(self, epochs, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         self.model.train()
+        best_loss = float('inf')
+        best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
+        
+        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
+        
         for epoch in range(epochs):
             self.optimizer_adam.zero_grad()
             
@@ -45,11 +51,25 @@ class TrainingManager:
                 current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
             )
             
+            if torch.isnan(loss) or loss.item() > 1.5 * best_loss:
+                self.model.load_state_dict(best_model_state)
+                for param_group in self.optimizer_adam.param_groups:
+                    param_group['lr'] *= 0.8
+                continue
+                
             loss.backward(retain_graph=True)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer_adam.step()
+            scheduler_adam.step()
+            
+            current_loss_value = loss.item()
+            if current_loss_value < best_loss:
+                best_loss = current_loss_value
+                best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
             
             if (epoch + 1) % 100 == 0:
-                print(f"Adam Epoch {epoch + 1}: Loss = {loss.item():.6e}")
+                current_lr = self.optimizer_adam.param_groups[0]['lr']
+                print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {current_lr:.3e}")
 
     def train_lbfgs(self, epochs, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         self.model.train()
