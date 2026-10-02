@@ -6,6 +6,8 @@ if current_directory not in sys.path:
     sys.path.insert(0, current_directory)
 
 import torch
+import numpy as np
+import matplotlib.pyplot as plt
 from geometry_engine.geometry import Geometry
 from geometry_engine.segment.segment import Segment
 from physics_domain.collocation_sampler import CollocationSampler
@@ -32,6 +34,32 @@ def main():
         y_boundaries_tuple=(-0.05, 0.05)
     )
     
+    # ---------------------------------------------------------
+    # TRỰC QUAN HÓA HÌNH HỌC TRƯỚC KHI HUẤN LUYỆN
+    # ---------------------------------------------------------
+    resolution = 100
+    x_coords = np.linspace(-0.05, 0.05, resolution)
+    y_coords = np.linspace(-0.05, 0.05, resolution)
+    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
+    
+    xy_points_tensor = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
+    sdf_values_tensor = geometry_instance.compute_global_signed_distance_field(xy_points_tensor)
+    
+    sdf_grid_np = sdf_values_tensor.numpy().reshape(resolution, resolution)
+    
+    plt.figure(figsize=(7, 6))
+    contour_plot = plt.contourf(X_grid, Y_grid, sdf_grid_np, levels=50, cmap="coolwarm")
+    plt.colorbar(contour_plot, label="Signed Distance Field (SDF)")
+    plt.contour(X_grid, Y_grid, sdf_grid_np, levels=[0.0], colors="black", linewidths=2.5)
+    
+    plt.title("Geometry Definition & SDF Contour")
+    plt.xlabel("x position")
+    plt.ylabel("y position")
+    plt.axis("equal")
+    plt.tight_layout()
+    plt.show()
+    # ---------------------------------------------------------
+
     model = ElectroMagneticPINN(
         geometry_engine_instance=geometry_instance,
         collocation_sampler_instance=collocation_sampler_instance
