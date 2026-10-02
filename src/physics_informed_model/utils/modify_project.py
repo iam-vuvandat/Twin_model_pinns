@@ -1,13 +1,15 @@
 import os
 
-def modify_geometry_engine():
+def modify_project_structure():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     
     geometry_engine_directory = os.path.abspath(os.path.join(base_directory, '..', 'geometry_engine'))
     segment_directory = os.path.join(geometry_engine_directory, 'segment')
+    physics_domain_directory = os.path.abspath(os.path.join(base_directory, '..', 'physics_domain'))
     
     os.makedirs(geometry_engine_directory, exist_ok=True)
     os.makedirs(segment_directory, exist_ok=True)
+    os.makedirs(physics_domain_directory, exist_ok=True)
 
     segment_init_file_path = os.path.join(segment_directory, '__init__.py')
     segment_file_path = os.path.join(segment_directory, 'segment.py')
@@ -16,6 +18,8 @@ def modify_geometry_engine():
     global_sdf_file_path = os.path.join(geometry_engine_directory, 'global_signed_distance_field.py')
     global_properties_file_path = os.path.join(geometry_engine_directory, 'global_physical_properties_evaluation.py')
     geometry_file_path = os.path.join(geometry_engine_directory, 'geometry.py')
+    
+    collocation_sampling_file_path = os.path.join(physics_domain_directory, 'collocation_sampling.py')
 
     init_source_code = ""
 
@@ -207,6 +211,53 @@ class Geometry:
         return evaluate_global_physical_properties(self.segments_list, points_tensor, self.vacuum_reluctivity)
 """
 
+    collocation_sampling_source_code = """import torch
+
+class CollocationSampler:
+    def __init__(self, x_boundaries_tuple, y_boundaries_tuple):
+        self.x_minimum = x_boundaries_tuple[0]
+        self.x_maximum = x_boundaries_tuple[1]
+        self.y_minimum = y_boundaries_tuple[0]
+        self.y_maximum = y_boundaries_tuple[1]
+
+    def generate_uniform_points_tensor(self, number_of_points):
+        points_tensor = torch.rand((number_of_points, 2), dtype=torch.float32)
+        points_tensor[:, 0] = points_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
+        points_tensor[:, 1] = points_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
+        points_tensor.requires_grad_(True)
+        return points_tensor
+
+    def generate_interface_points_tensor(self, geometry_object, number_of_points, distance_threshold):
+        pool_size_value = number_of_points * 20
+        points_pool_tensor = torch.rand((pool_size_value, 2), dtype=torch.float32)
+        points_pool_tensor[:, 0] = points_pool_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
+        points_pool_tensor[:, 1] = points_pool_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
+        
+        signed_distance_field_tensor = geometry_object.compute_global_signed_distance_field(points_pool_tensor)
+        
+        mask_tensor = torch.abs(signed_distance_field_tensor) < distance_threshold
+        mask_tensor_one_dimensional = mask_tensor.squeeze()
+        
+        interface_points_tensor = points_pool_tensor[mask_tensor_one_dimensional]
+        
+        if interface_points_tensor.shape[0] > number_of_points:
+            interface_points_tensor = interface_points_tensor[:number_of_points, :]
+            
+        interface_points_tensor = interface_points_tensor.detach().clone()
+        interface_points_tensor.requires_grad_(True)
+        return interface_points_tensor
+
+    def generate_combined_points_tensor(self, geometry_object, number_of_uniform_points, number_of_interface_points, distance_threshold):
+        uniform_points_tensor = self.generate_uniform_points_tensor(number_of_uniform_points)
+        interface_points_tensor = self.generate_interface_points_tensor(geometry_object, number_of_interface_points, distance_threshold)
+        
+        combined_points_tensor = torch.cat([uniform_points_tensor, interface_points_tensor], dim=0)
+        
+        combined_points_tensor = combined_points_tensor.detach().clone()
+        combined_points_tensor.requires_grad_(True)
+        return combined_points_tensor
+"""
+
     with open(segment_init_file_path, 'w', encoding='utf-8') as segment_init_file_object:
         segment_init_file_object.write(init_source_code)
 
@@ -225,5 +276,8 @@ class Geometry:
     with open(geometry_file_path, 'w', encoding='utf-8') as geometry_file_object:
         geometry_file_object.write(geometry_source_code)
 
+    with open(collocation_sampling_file_path, 'w', encoding='utf-8') as collocation_sampling_file_object:
+        collocation_sampling_file_object.write(collocation_sampling_source_code)
+
 if __name__ == '__main__':
-    modify_geometry_engine()
+    modify_project_structure()

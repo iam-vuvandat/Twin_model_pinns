@@ -1,9 +1,8 @@
 import torch
-from abc import ABC, abstractmethod
-from functions.polygon_sdf import compute_polygon_signed_distance_field
+from segment.polygon_signed_distance_field import compute_polygon_signed_distance_field
 
-class Segment(ABC):
-    def __init__(self):
+class Segment:
+    def __init__(self, vertices_list=None):
         self.material_name = "air"
         self.vacuum_reluctivity = 795774.715459
         
@@ -15,6 +14,14 @@ class Segment(ABC):
         
         self.current_density_z_axis = 0.0
         self.current_density_function = None
+        
+        self.vertices_tensor = None
+        if vertices_list is not None:
+            self.set_vertices(vertices_list)
+
+    def set_vertices(self, vertices_list):
+        self.vertices_tensor = torch.tensor(vertices_list, dtype=torch.float32)
+        return self
 
     def set_material_properties(
         self, 
@@ -33,22 +40,6 @@ class Segment(ABC):
         self.magnetization_function = magnetization_function
         self.current_density_z_axis = current_density_z_axis
         self.current_density_function = current_density_function
-        return self
-
-    @abstractmethod
-    def compute_signed_distance_field(self, points_tensor):
-        pass
-
-
-class PolygonSegment(Segment):
-    def __init__(self, vertices_list=None):
-        super().__init__()
-        self.vertices_tensor = None
-        if vertices_list is not None:
-            self.set_vertices(vertices_list)
-
-    def set_vertices(self, vertices_list):
-        self.vertices_tensor = torch.tensor(vertices_list, dtype=torch.float32)
         return self
 
     def compute_signed_distance_field(self, points_tensor):
