@@ -1,12 +1,12 @@
 import os
 
-def fix_curriculum_signature():
+def fix_curriculum_training_manager():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     project_root_directory = os.path.abspath(os.path.join(base_directory, '..'))
     
-    curriculum_training_manager_file_path = os.path.join(project_root_directory, 'curriculum_training_manager.py')
+    curriculum_path = os.path.join(project_root_directory, 'curriculum_training_manager.py')
 
-    curriculum_training_manager_source_code = """import torch
+    source_code = """import torch
 from training_manager import TrainingManager
 
 class CurriculumTrainingManager:
@@ -23,7 +23,6 @@ class CurriculumTrainingManager:
             
             print(f"--- Curriculum Stage {stage}/{stages} (Alpha = {alpha:.2f}) ---")
             
-            # [SỬA LỖI]: Lược bỏ signed_distance_field_tensor khỏi lệnh gọi train_adam
             self.training_manager_instance.train_adam(
                 epochs=epochs_per_stage,
                 points_tensor=points_tensor,
@@ -35,7 +34,6 @@ class CurriculumTrainingManager:
             
         print("--- Curriculum L-BFGS Refinement (Alpha = 1.00) ---")
         
-        # [SỬA LỖI]: Lược bỏ signed_distance_field_tensor khỏi lệnh gọi train_lbfgs
         self.training_manager_instance.train_lbfgs(
             epochs=100, 
             points_tensor=points_tensor, 
@@ -46,10 +44,10 @@ class CurriculumTrainingManager:
         )
 """
 
-    with open(curriculum_training_manager_file_path, 'w', encoding='utf-8') as f:
-        f.write(curriculum_training_manager_source_code)
+    with open(curriculum_path, 'w', encoding='utf-8') as f:
+        f.write(source_code)
         
-    print("Đã vá xong chữ ký hàm trong CurriculumTrainingManager!")
+    print("Đã cập nhật lại curriculum_training_manager.py thành công!")
 
 if __name__ == '__main__':
-    fix_curriculum_signature()
+    fix_curriculum_training_manager()
