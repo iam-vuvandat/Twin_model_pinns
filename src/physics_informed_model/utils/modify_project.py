@@ -541,7 +541,14 @@ class ElectroMagneticPINN:
         return magnetic_vector_potential_z_tensor
 """
 
-    test_simulation_source_code = """import torch
+    test_simulation_source_code = """import os
+import sys
+
+current_directory = os.path.dirname(os.path.abspath(__file__))
+if current_directory not in sys.path:
+    sys.path.insert(0, current_directory)
+
+import torch
 from geometry_engine.geometry import Geometry
 from geometry_engine.segment.segment import Segment
 from physics_domain.collocation_sampler import CollocationSampler
