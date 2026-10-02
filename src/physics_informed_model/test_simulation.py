@@ -49,7 +49,6 @@ def main():
         y_boundaries_tuple=(-0.05, 0.05)
     )
 
-    # 1. Vẽ đồ thị đầu bài (Geometry & Material properties)
     geometry_instance.plot_problem_definition(
         x_boundaries_tuple=(-0.05, 0.05),
         y_boundaries_tuple=(-0.05, 0.05),
@@ -61,7 +60,6 @@ def main():
         collocation_sampler_instance=collocation_sampler_instance
     )
     
-    # 2. Huấn luyện mô hình PINN
     model.execute_training_process(
         number_of_uniform_points=2500,
         number_of_interface_points=800,
@@ -70,7 +68,6 @@ def main():
         epochs_per_stage=400
     )
     
-    # 3. Trực quan hóa kết quả trường điện từ sau khi giải xong
     print("Đang tạo biểu đồ trực quan hóa kết quả trường điện từ...")
     resolution = 120
     x_coords = np.linspace(-0.05, 0.05, resolution)
@@ -88,7 +85,6 @@ def main():
     
     fig, axs = plt.subplots(2, 2, figsize=(12, 10))
     
-    # Đồ thị 1: Từ thế vector A_z
     contour_az = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
     fig.colorbar(contour_az, ax=axs[0, 0], label="A_z (Wb/m)")
     axs[0, 0].set_title("Magnetic Vector Potential ($A_z$)")
@@ -96,15 +92,14 @@ def main():
     axs[0, 0].set_ylabel("y (m)")
     axs[0, 0].set_aspect('equal')
     
-    # Đồ thị 2: Độ lớn mật độ từ thông |B|
-    contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="inferno")
+    # Đã đổi cmap thành rainbow cho đồ thị |B|
+    contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
     fig.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
     axs[0, 1].set_title("Magnetic Flux Density Magnitude ($|B|$")
     axs[0, 1].set_xlabel("x (m)")
     axs[0, 1].set_ylabel("y (m)")
     axs[0, 1].set_aspect('equal')
     
-    # Đồ thị 3: Thành phần từ trường B_x
     contour_bx = axs[1, 0].contourf(X_grid, Y_grid, B_x_grid, levels=60, cmap="coolwarm")
     fig.colorbar(contour_bx, ax=axs[1, 0], label="B_x (T)")
     axs[1, 0].set_title("Magnetic Field Component ($B_x$)")
@@ -112,7 +107,6 @@ def main():
     axs[1, 0].set_ylabel("y (m)")
     axs[1, 0].set_aspect('equal')
     
-    # Đồ thị 4: Thành phần từ trường B_y
     contour_by = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=60, cmap="coolwarm")
     fig.colorbar(contour_by, ax=axs[1, 1], label="B_y (T)")
     axs[1, 1].set_title("Magnetic Field Component ($B_y$)")

@@ -2,7 +2,7 @@ import torch
 import torch.optim as optim
 
 class TrainingManager:
-    def __init__(self, model, pde_evaluator, lr_adam=1e-3, loss_scaling_factor=1e-6):
+    def __init__(self, model, pde_evaluator, lr_adam=1e-3, loss_scaling_factor=2e-9):
         self.model = model
         self.pde_evaluator = pde_evaluator
         self.loss_scaling_factor = loss_scaling_factor
@@ -21,7 +21,6 @@ class TrainingManager:
         )
 
     def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        # [CẬP NHẬT]: Không còn truyền signed_distance_field_tensor vào mạng model
         magnetic_vector_potential_z_tensor = self.model(points_tensor)
         
         residual = self.pde_evaluator.compute_residual(
@@ -72,21 +71,6 @@ class TrainingManager:
                 current_lr = self.optimizer_adam.param_groups[0]['lr']
                 print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {current_lr:.3e}")
 
-    def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        self.model.train()
-        for epoch in range(epochs):
-            def closure():
-                self.optimizer_lbfgs.zero_grad()
-                loss = self.compute_loss(
-                    points_tensor, reluctivity_tensor, 
-                    current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
-                )
-                loss.backward(retain_graph=True)
-                return loss
-            
-            loss_val = self.optimizer_lbfgs.step(closure)
-            print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
-            
     def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         self.model.train()
         for epoch in range(epochs):
