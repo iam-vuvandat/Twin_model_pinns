@@ -15,7 +15,6 @@ class CollocationSampler:
         return points_tensor
 
     def generate_interface_points_tensor(self, geometry_object, number_of_points, distance_threshold):
-        # [ĐÃ SỬA LỖI]: Bù đắp điểm bằng vòng lặp while để lấy đủ số lượng interface points
         collected_points = []
         collected_count = 0
         pool_size_value = number_of_points * 20

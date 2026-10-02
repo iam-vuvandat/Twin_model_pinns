@@ -30,7 +30,10 @@ def compute_polygon_signed_distance_field(vertices_tensor, points_tensor):
     clamped_projection_parameter = torch.clamp(projection_parameter, min=0.0, max=1.0)
     
     closest_points = start_points.unsqueeze(0) + clamped_projection_parameter.unsqueeze(-1) * edge_vectors.unsqueeze(0)
-    distances_to_edges = torch.norm(points_tensor.unsqueeze(1) - closest_points, dim=2)
+    
+    diff_vectors = points_tensor.unsqueeze(1) - closest_points
+    distances_to_edges = torch.sqrt(torch.sum(diff_vectors * diff_vectors, dim=2) + 1e-12)
+    
     minimum_distances, _ = torch.min(distances_to_edges, dim=1)
     
     points_x_coordinates = points_tensor[:, 0].unsqueeze(1)
@@ -46,7 +49,6 @@ def compute_polygon_signed_distance_field(vertices_tensor, points_tensor):
     
     y_difference = end_points_y_coordinates - start_points_y_coordinates
     
-    # [ĐÃ SỬA LỖI]: Tránh chia cho 0 khi cạnh song song với trục hoành
     dy_safe = torch.where(
         torch.abs(y_difference) < torch.finfo(computation_dtype).eps,
         torch.full_like(y_difference, 1e-7),

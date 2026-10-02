@@ -1,5 +1,4 @@
 import torch
-# [ĐÃ SỬA LỖI]: Cập nhật Import tuyệt đối để tránh lỗi relative import
 from training_manager import TrainingManager
 
 class CurriculumTrainingManager:

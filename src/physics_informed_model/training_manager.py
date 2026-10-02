@@ -31,7 +31,8 @@ class TrainingManager:
             H_cy=coercive_field_y_tensor
         )
         
-        loss_pde = torch.mean(residual**2)
+        residual_scaled = residual * 1e-6
+        loss_pde = torch.mean(residual_scaled**2)
         return loss_pde
 
     def train_adam(self, epochs, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
@@ -62,6 +63,5 @@ class TrainingManager:
                 loss.backward(retain_graph=True)
                 return loss
             
-            # [ĐÃ SỬA LỖI]: Loại bỏ lời gọi closure() dư thừa tốn kém hiệu suất
             loss_val = self.optimizer_lbfgs.step(closure)
             print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
