@@ -4,7 +4,6 @@ def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_rel
     number_of_points = points_tensor.shape[0]
     computation_device = points_tensor.device
     
-    # Khởi tạo không gian nền mặc định (Background) là Không khí
     global_reluctivity_tensor = torch.full((number_of_points, 1), vacuum_reluctivity, dtype=torch.float32, device=computation_device)
     global_coercive_field_x_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
     global_coercive_field_y_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
@@ -16,15 +15,13 @@ def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_rel
     for segment_object in segments_list:
         signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
         
-        # [CẬP NHẬT CỐT LÕI]: Hàm Sigmoid làm mờ ranh giới, giữ lại đạo hàm cho PyTorch Autograd
-        mask_smooth = torch.sigmoid(-steepness * signed_distance_field)
+        # [SỬA LỖI]: Ép kiểu về mảng cột (N, 1) để đồng nhất kích thước, ngăn chặn Broadcasting phình to ma trận
+        mask_smooth = torch.sigmoid(-steepness * signed_distance_field).view(-1, 1)
         
-        # Tính toán giá trị của riêng Segment
         seg_reluctivity = segment_object.evaluate_reluctivity(points_tensor)
         hx_tensor, hy_tensor = segment_object.evaluate_magnetization_vector(points_tensor)
         seg_jz = segment_object.evaluate_current_density(points_tensor)
         
-        # Phối trộn (Blend) lên ma trận nền dựa vào hệ số mặt nạ
         global_reluctivity_tensor = global_reluctivity_tensor + mask_smooth * (seg_reluctivity - vacuum_reluctivity)
         global_coercive_field_x_tensor = global_coercive_field_x_tensor + mask_smooth * hx_tensor
         global_coercive_field_y_tensor = global_coercive_field_y_tensor + mask_smooth * hy_tensor
