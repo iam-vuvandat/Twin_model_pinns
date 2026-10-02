@@ -120,10 +120,11 @@ class Segment:
         self.vacuum_reluctivity = 795774.715459
         
         self.relative_permeability = 1.0
-        self.magnetic_curve_function = None
+        self.reluctivity_function = None
         
-        self.coercive_field_magnitude = 0.0
-        self.magnetization_function = None
+        self.coercive_field_x = 0.0
+        self.coercive_field_y = 0.0
+        self.magnetization_vector_function = None
         
         self.current_density_z_axis = 0.0
         self.current_density_function = None
@@ -140,23 +141,43 @@ class Segment:
         self, 
         name="default", 
         relative_permeability=1.0, 
-        magnetic_curve_function=None, 
-        coercive_field_magnitude=0.0, 
-        magnetization_function=None, 
+        reluctivity_function=None,
+        coercive_field_x=0.0,
+        coercive_field_y=0.0,
+        magnetization_vector_function=None, 
         current_density_z_axis=0.0,
         current_density_function=None
     ):
         self.material_name = name
         self.relative_permeability = relative_permeability
-        self.magnetic_curve_function = magnetic_curve_function
-        self.coercive_field_magnitude = coercive_field_magnitude
-        self.magnetization_function = magnetization_function
+        self.reluctivity_function = reluctivity_function
+        self.coercive_field_x = coercive_field_x
+        self.coercive_field_y = coercive_field_y
+        self.magnetization_vector_function = magnetization_vector_function
         self.current_density_z_axis = current_density_z_axis
         self.current_density_function = current_density_function
         return self
 
     def compute_signed_distance_field(self, points_tensor):
         return compute_polygon_signed_distance_field(self.vertices_tensor, points_tensor)
+
+    def evaluate_reluctivity(self, points_tensor):
+        if self.reluctivity_function is not None:
+            return self.reluctivity_function(points_tensor)
+        constant_reluctivity = self.vacuum_reluctivity / self.relative_permeability
+        return torch.full((points_tensor.shape[0], 1), constant_reluctivity, dtype=torch.float32, device=points_tensor.device)
+
+    def evaluate_magnetization_vector(self, points_tensor):
+        if self.magnetization_vector_function is not None:
+            return self.magnetization_vector_function(points_tensor)
+        hx_tensor = torch.full((points_tensor.shape[0], 1), self.coercive_field_x, dtype=torch.float32, device=points_tensor.device)
+        hy_tensor = torch.full((points_tensor.shape[0], 1), self.coercive_field_y, dtype=torch.float32, device=points_tensor.device)
+        return hx_tensor, hy_tensor
+
+    def evaluate_current_density(self, points_tensor):
+        if self.current_density_function is not None:
+            return self.current_density_function(points_tensor)
+        return torch.full((points_tensor.shape[0], 1), self.current_density_z_axis, dtype=torch.float32, device=points_tensor.device)
 """
 
     global_sdf_source_code = """import torch
@@ -180,7 +201,7 @@ def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_rel
     number_of_points = points_tensor.shape[0]
     computation_device = points_tensor.device
     
-    global_relative_permeability_tensor = torch.ones((number_of_points, 1), dtype=torch.float32, device=computation_device)
+    global_reluctivity_tensor = torch.full((number_of_points, 1), vacuum_reluctivity, dtype=torch.float32, device=computation_device)
     global_coercive_field_x_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
     global_coercive_field_y_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
     global_current_density_z_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
@@ -191,20 +212,25 @@ def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_rel
     for segment_object in segments_list:
         signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
         mask_tensor = signed_distance_field <= 0.0
+        mask_1d = mask_tensor.squeeze()
         
-        if mask_tensor.any():
-            global_relative_permeability_tensor[mask_tensor] = segment_object.relative_permeability
-            global_current_density_z_tensor[mask_tensor] = segment_object.current_density_z_axis
-            global_coercive_field_x_tensor[mask_tensor] = segment_object.coercive_field_magnitude
-            global_material_classification_tensor[mask_tensor] = material_index_counter
+        if mask_1d.any():
+            points_in_segment = points_tensor[mask_1d]
+            
+            global_reluctivity_tensor[mask_1d] = segment_object.evaluate_reluctivity(points_in_segment)
+            
+            hx_tensor, hy_tensor = segment_object.evaluate_magnetization_vector(points_in_segment)
+            global_coercive_field_x_tensor[mask_1d] = hx_tensor
+            global_coercive_field_y_tensor[mask_1d] = hy_tensor
+            
+            global_current_density_z_tensor[mask_1d] = segment_object.evaluate_current_density(points_in_segment)
+            
+            global_material_classification_tensor[mask_1d] = material_index_counter
         
         material_index_counter += 1.0
 
-    global_reluctivity_tensor = vacuum_reluctivity / global_relative_permeability_tensor
-
     return {
         "reluctivity": global_reluctivity_tensor,
-        "relative_permeability": global_relative_permeability_tensor,
         "coercive_field_x": global_coercive_field_x_tensor,
         "coercive_field_y": global_coercive_field_y_tensor,
         "current_density_z": global_current_density_z_tensor,
