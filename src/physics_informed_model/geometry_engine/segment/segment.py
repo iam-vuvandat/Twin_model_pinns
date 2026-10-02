@@ -1,5 +1,5 @@
 import torch
-from .segment.polygon_signed_distance_field import compute_polygon_signed_distance_field
+from segment.polygon_signed_distance_field import compute_polygon_signed_distance_field
 
 class Segment:
     def __init__(self, vertices_list=None):
