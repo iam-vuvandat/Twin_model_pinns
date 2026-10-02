@@ -86,3 +86,18 @@ class TrainingManager:
             
             loss_val = self.optimizer_lbfgs.step(closure)
             print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
+            
+    def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+        self.model.train()
+        for epoch in range(epochs):
+            def closure():
+                self.optimizer_lbfgs.zero_grad()
+                loss = self.compute_loss(
+                    points_tensor, reluctivity_tensor, 
+                    current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
+                )
+                loss.backward(retain_graph=True)
+                return loss
+            
+            loss_val = self.optimizer_lbfgs.step(closure)
+            print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
