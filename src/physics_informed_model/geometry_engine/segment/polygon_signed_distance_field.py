@@ -45,13 +45,15 @@ def compute_polygon_signed_distance_field(vertices_tensor, points_tensor):
     valid_y_intersection = condition_y_between_start_and_end | condition_y_between_end_and_start
     
     y_difference = end_points_y_coordinates - start_points_y_coordinates
-    y_difference = torch.where(
+    
+    # [ĐÃ SỬA LỖI]: Tránh chia cho 0 khi cạnh song song với trục hoành
+    dy_safe = torch.where(
         torch.abs(y_difference) < torch.finfo(computation_dtype).eps,
-        torch.ones_like(y_difference),
+        torch.full_like(y_difference, 1e-7),
         y_difference,
     )
     
-    intersection_x_coordinates = start_points_x_coordinates + (points_y_coordinates - start_points_y_coordinates) * (end_points_x_coordinates - start_points_x_coordinates) / y_difference
+    intersection_x_coordinates = start_points_x_coordinates + (points_y_coordinates - start_points_y_coordinates) * (end_points_x_coordinates - start_points_x_coordinates) / dy_safe
     ray_crossings = valid_y_intersection & (points_x_coordinates < intersection_x_coordinates)
     
     is_point_inside = ray_crossings.sum(dim=1) % 2 == 1

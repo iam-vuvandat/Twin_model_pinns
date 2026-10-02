@@ -2,10 +2,9 @@ import torch
 import torch.optim as optim
 
 class TrainingManager:
-    def __init__(self, model, pde_evaluator, material_mapping, lr_adam=1e-3):
+    def __init__(self, model, pde_evaluator, lr_adam=1e-3):
         self.model = model
         self.pde_evaluator = pde_evaluator
-        self.material_mapping = material_mapping
         
         self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
         
@@ -20,25 +19,29 @@ class TrainingManager:
             line_search_fn="strong_wolfe"
         )
 
-    def compute_loss(self, xy, sdf_boundary, iron_mask, magnet_mask, slot_masks_dict, slot_current_dict, H_cx, H_cy):
-        A_z = self.model(xy, sdf_boundary)
+    def compute_loss(self, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+        magnetic_vector_potential_z_tensor = self.model(points_tensor, signed_distance_field_tensor)
         
-        nu = self.material_mapping.get_reluctivity(iron_mask, magnet_mask)
-        J_z = self.material_mapping.get_current_density(xy, slot_masks_dict, slot_current_dict)
-        
-        residual = self.pde_evaluator.compute_residual(xy, A_z, nu, J_z, H_cx, H_cy)
+        residual = self.pde_evaluator.compute_residual(
+            xy=points_tensor,
+            A_z=magnetic_vector_potential_z_tensor,
+            nu=reluctivity_tensor,
+            J_z=current_density_z_tensor,
+            H_cx=coercive_field_x_tensor,
+            H_cy=coercive_field_y_tensor
+        )
         
         loss_pde = torch.mean(residual**2)
         return loss_pde
 
-    def train_adam(self, epochs, xy, sdf_boundary, iron_mask, magnet_mask, slot_masks_dict, slot_current_dict, H_cx, H_cy):
+    def train_adam(self, epochs, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         self.model.train()
         for epoch in range(epochs):
             self.optimizer_adam.zero_grad()
             
             loss = self.compute_loss(
-                xy, sdf_boundary, iron_mask, magnet_mask, 
-                slot_masks_dict, slot_current_dict, H_cx, H_cy
+                points_tensor, signed_distance_field_tensor, reluctivity_tensor, 
+                current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
             )
             
             loss.backward(retain_graph=True)
@@ -47,18 +50,18 @@ class TrainingManager:
             if (epoch + 1) % 100 == 0:
                 print(f"Adam Epoch {epoch + 1}: Loss = {loss.item():.6e}")
 
-    def train_lbfgs(self, epochs, xy, sdf_boundary, iron_mask, magnet_mask, slot_masks_dict, slot_current_dict, H_cx, H_cy):
+    def train_lbfgs(self, epochs, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         self.model.train()
         for epoch in range(epochs):
             def closure():
                 self.optimizer_lbfgs.zero_grad()
                 loss = self.compute_loss(
-                    xy, sdf_boundary, iron_mask, magnet_mask, 
-                    slot_masks_dict, slot_current_dict, H_cx, H_cy
+                    points_tensor, signed_distance_field_tensor, reluctivity_tensor, 
+                    current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
                 )
                 loss.backward(retain_graph=True)
                 return loss
             
-            # 2. SỬA LỖI HIỆU SUẤT L-BFGS: Không gọi closure() lần thứ 2
+            # [ĐÃ SỬA LỖI]: Loại bỏ lời gọi closure() dư thừa tốn kém hiệu suất
             loss_val = self.optimizer_lbfgs.step(closure)
             print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")

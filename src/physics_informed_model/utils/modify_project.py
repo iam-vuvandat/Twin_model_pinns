@@ -7,25 +7,8 @@ def modify_project_structure():
     
     geometry_engine_directory = os.path.join(project_root_directory, 'geometry_engine')
     segment_directory = os.path.join(geometry_engine_directory, 'segment')
-    templates_directory = os.path.join(geometry_engine_directory, 'templates')
     physics_domain_directory = os.path.join(project_root_directory, 'physics_domain')
     physical_equations_directory = os.path.join(physics_domain_directory, 'physical_equations')
-    materials_directory = os.path.join(physics_domain_directory, 'materials')
-    
-    # Dọn dẹp triệt để các thư mục và tệp cũ gây xung đột cấu trúc
-    if os.path.exists(materials_directory):
-        shutil.rmtree(materials_directory)
-    if os.path.exists(templates_directory):
-        shutil.rmtree(templates_directory)
-        
-    obsolete_files = [
-        os.path.join(physics_domain_directory, 'collocation_sampling.py'),
-        os.path.join(project_root_directory, 'physics_neural_network.py'),
-        os.path.join(project_root_directory, 'trial_function_wrapper.py')
-    ]
-    for obs_file in obsolete_files:
-        if os.path.exists(obs_file):
-            os.remove(obs_file)
 
     os.makedirs(geometry_engine_directory, exist_ok=True)
     os.makedirs(segment_directory, exist_ok=True)
@@ -83,7 +66,10 @@ def compute_polygon_signed_distance_field(vertices_tensor, points_tensor):
     clamped_projection_parameter = torch.clamp(projection_parameter, min=0.0, max=1.0)
     
     closest_points = start_points.unsqueeze(0) + clamped_projection_parameter.unsqueeze(-1) * edge_vectors.unsqueeze(0)
-    distances_to_edges = torch.norm(points_tensor.unsqueeze(1) - closest_points, dim=2)
+    
+    diff_vectors = points_tensor.unsqueeze(1) - closest_points
+    distances_to_edges = torch.sqrt(torch.sum(diff_vectors * diff_vectors, dim=2) + 1e-12)
+    
     minimum_distances, _ = torch.min(distances_to_edges, dim=1)
     
     points_x_coordinates = points_tensor[:, 0].unsqueeze(1)
@@ -99,7 +85,6 @@ def compute_polygon_signed_distance_field(vertices_tensor, points_tensor):
     
     y_difference = end_points_y_coordinates - start_points_y_coordinates
     
-    # [ĐÃ SỬA LỖI]: Tránh chia cho 0 khi cạnh song song với trục hoành
     dy_safe = torch.where(
         torch.abs(y_difference) < torch.finfo(computation_dtype).eps,
         torch.full_like(y_difference, 1e-7),
@@ -284,7 +269,6 @@ class CollocationSampler:
         return points_tensor
 
     def generate_interface_points_tensor(self, geometry_object, number_of_points, distance_threshold):
-        # [ĐÃ SỬA LỖI]: Bù đắp điểm bằng vòng lặp while để lấy đủ số lượng interface points
         collected_points = []
         collected_count = 0
         pool_size_value = number_of_points * 20
@@ -421,7 +405,8 @@ class TrainingManager:
             H_cy=coercive_field_y_tensor
         )
         
-        loss_pde = torch.mean(residual**2)
+        residual_scaled = residual * 1e-6
+        loss_pde = torch.mean(residual_scaled**2)
         return loss_pde
 
     def train_adam(self, epochs, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
@@ -452,13 +437,11 @@ class TrainingManager:
                 loss.backward(retain_graph=True)
                 return loss
             
-            # [ĐÃ SỬA LỖI]: Loại bỏ lời gọi closure() dư thừa tốn kém hiệu suất
             loss_val = self.optimizer_lbfgs.step(closure)
             print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
 """
 
     curriculum_training_manager_source_code = """import torch
-# [ĐÃ SỬA LỖI]: Cập nhật Import tuyệt đối để tránh lỗi relative import
 from training_manager import TrainingManager
 
 class CurriculumTrainingManager:
