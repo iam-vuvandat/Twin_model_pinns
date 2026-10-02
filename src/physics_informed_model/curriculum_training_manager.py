@@ -5,7 +5,7 @@ class CurriculumTrainingManager:
     def __init__(self, training_manager_instance: TrainingManager):
         self.training_manager_instance = training_manager_instance
 
-    def train_source_ramping(self, stages, epochs_per_stage, points_tensor, signed_distance_field_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+    def train_source_ramping(self, stages, epochs_per_stage, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         for stage in range(1, stages + 1):
             alpha = stage / stages
             
@@ -18,7 +18,6 @@ class CurriculumTrainingManager:
             self.training_manager_instance.train_adam(
                 epochs=epochs_per_stage,
                 points_tensor=points_tensor,
-                signed_distance_field_tensor=signed_distance_field_tensor,
                 reluctivity_tensor=reluctivity_tensor,
                 current_density_z_tensor=current_density_z_tensor_scaled,
                 coercive_field_x_tensor=coercive_field_x_tensor_scaled,
@@ -30,7 +29,6 @@ class CurriculumTrainingManager:
         self.training_manager_instance.train_lbfgs(
             epochs=100, 
             points_tensor=points_tensor, 
-            signed_distance_field_tensor=signed_distance_field_tensor, 
             reluctivity_tensor=reluctivity_tensor, 
             current_density_z_tensor=current_density_z_tensor, 
             coercive_field_x_tensor=coercive_field_x_tensor, 
