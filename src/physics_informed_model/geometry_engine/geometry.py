@@ -1,7 +1,7 @@
 import torch
-from segment.segment import Segment
-from global_signed_distance_field import compute_global_signed_distance_field
-from global_physical_properties_evaluation import evaluate_global_physical_properties
+from .segment.segment import Segment
+from .global_signed_distance_field import compute_global_signed_distance_field
+from .global_physical_properties_evaluation import evaluate_global_physical_properties
 
 class Geometry:
     def __init__(self):
