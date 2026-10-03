@@ -39,7 +39,7 @@ def main():
     bottom_magnet = Segment(bottom_magnet_vertices).set_material_properties(
         name="bottom_magnet",
         relative_permeability=1.05,
-        coercive_field_x=-800000.0,
+        coercive_field_x=800000.0,
         coercive_field_y=0.0
     )
     geometry_instance.add_segment(bottom_magnet)
@@ -92,10 +92,9 @@ def main():
     axs[0, 0].set_ylabel("y (m)")
     axs[0, 0].set_aspect('equal')
     
-    # Đã đổi cmap thành rainbow cho đồ thị |B|
     contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
     fig.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
-    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($|B|$")
+    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($|B|$)")
     axs[0, 1].set_xlabel("x (m)")
     axs[0, 1].set_ylabel("y (m)")
     axs[0, 1].set_aspect('equal')
