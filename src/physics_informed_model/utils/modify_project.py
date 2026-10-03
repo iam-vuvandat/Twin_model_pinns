@@ -1,10 +1,11 @@
 import os
 
-def fix_adam_scheduler():
+def apply_critical_bug_fixes():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     project_root_directory = os.path.abspath(os.path.join(base_directory, '..'))
     
     training_manager_path = os.path.join(project_root_directory, 'training_manager.py')
+    maxwell_pde_loss_path = os.path.join(project_root_directory, 'physics_domain', 'physical_equations', 'maxwell_pde_loss.py')
 
     training_manager_source_code = """import torch
 import torch.optim as optim
@@ -113,10 +114,63 @@ class TrainingManager:
             print(f"L-BFGS Epoch {epoch + 1}: Loss = {current_loss_value:.6e}")
 """
 
+    maxwell_pde_loss_source_code = """import torch
+
+class MaxwellPDELoss:
+    def __init__(self, L0=0.05, H0=800000.0, nu0=795774.715459):
+        self.L0 = L0
+        self.H0 = H0
+        self.nu0 = nu0
+
+    def compute_residual(self, xy, A_z_star, nu, J_z, H_cx, H_cy):
+        nu_star = nu / self.nu0
+        H_cx_star = H_cx / self.H0
+        H_cy_star = H_cy / self.H0
+        J_z_star = J_z / (self.H0 / self.L0)
+        
+        grad_A_star = torch.autograd.grad(
+            outputs=A_z_star,
+            inputs=xy,
+            grad_outputs=torch.ones_like(A_z_star),
+            create_graph=True,
+            retain_graph=True
+        )[0]
+        
+        dAz_star_dx_star = grad_A_star[:, 0:1] * self.L0
+        dAz_star_dy_star = grad_A_star[:, 1:2] * self.L0
+        
+        H_x_star = nu_star * dAz_star_dy_star - H_cx_star
+        H_y_star = -nu_star * dAz_star_dx_star - H_cy_star
+        
+        grad_Hx_star = torch.autograd.grad(
+            outputs=H_x_star,
+            inputs=xy,
+            grad_outputs=torch.ones_like(H_x_star),
+            create_graph=True,
+            retain_graph=True
+        )[0]
+        dHx_star_dy_star = grad_Hx_star[:, 1:2] * self.L0
+        
+        grad_Hy_star = torch.autograd.grad(
+            outputs=H_y_star,
+            inputs=xy,
+            grad_outputs=torch.ones_like(H_y_star),
+            create_graph=True,
+            retain_graph=True
+        )[0]
+        dHy_star_dx_star = grad_Hy_star[:, 0:1] * self.L0
+        
+        residual_star = dHy_star_dx_star - dHx_star_dy_star - J_z_star
+        return residual_star
+"""
+
     with open(training_manager_path, 'w', encoding='utf-8') as f:
         f.write(training_manager_source_code)
+    
+    with open(maxwell_pde_loss_path, 'w', encoding='utf-8') as f:
+        f.write(maxwell_pde_loss_source_code)
         
-    print("Đã sửa lỗi Adam Scheduler bị kẹt Learning Rate!")
+    print("Đã vá thành công các lỗi về Autograd và cấu trúc giải phóng bộ nhớ.")
 
 if __name__ == '__main__':
-    fix_adam_scheduler()
+    apply_critical_bug_fixes()
