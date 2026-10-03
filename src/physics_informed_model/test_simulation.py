@@ -30,6 +30,7 @@ def main():
     ]
     top_magnet = Segment(top_magnet_vertices).set_material_properties(
         name="top_magnet",
+        priority=1,
         relative_permeability=1.05,
         coercive_field_x=800000.0,
         coercive_field_y=0.0
@@ -44,6 +45,7 @@ def main():
     ]
     bottom_magnet = Segment(bottom_magnet_vertices).set_material_properties(
         name="bottom_magnet",
+        priority=1,
         relative_permeability=1.05,
         coercive_field_x=800000.0,
         coercive_field_y=0.0
