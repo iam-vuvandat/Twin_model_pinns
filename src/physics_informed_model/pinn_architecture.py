@@ -2,17 +2,17 @@ import torch
 import torch.nn as nn
 
 class PINNArchitecture(nn.Module):
-    def __init__(self, input_dim=2, hidden_layers=4, hidden_neurons=50, output_dim=1, domain_scale=0.05):
+    def __init__(self, input_dim=2, hidden_layers=4, hidden_neurons=50, output_dim=1, domain_scale=0.05, activation_function=nn.SiLU()):
         super().__init__()
         self.domain_scale = domain_scale
         
         layers = []
         layers.append(nn.Linear(input_dim, hidden_neurons))
-        layers.append(nn.SiLU())
+        layers.append(activation_function)
         
         for _ in range(hidden_layers - 1):
             layers.append(nn.Linear(hidden_neurons, hidden_neurons))
-            layers.append(nn.SiLU())
+            layers.append(activation_function)
             
         layers.append(nn.Linear(hidden_neurons, output_dim))
         

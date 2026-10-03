@@ -1,10 +1,11 @@
 import torch
+import torch.nn as nn
 from pinn_architecture import PINNArchitecture
 from training_manager import TrainingManager
 from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
 
 class ElectroMagneticPINN:
-    def __init__(self, geometry_engine_instance, collocation_sampler_instance):
+    def __init__(self, geometry_engine_instance, collocation_sampler_instance, hidden_layers=4, hidden_neurons=50, activation_function=nn.SiLU()):
         self.geometry_engine_instance = geometry_engine_instance
         self.collocation_sampler_instance = collocation_sampler_instance
         
@@ -13,7 +14,12 @@ class ElectroMagneticPINN:
         self.nu0 = self.geometry_engine_instance.vacuum_reluctivity
         self.A0 = (self.H0 * self.L0) / self.nu0
         
-        self.pinn_architecture_instance = PINNArchitecture(domain_scale=self.L0)
+        self.pinn_architecture_instance = PINNArchitecture(
+            domain_scale=self.L0,
+            hidden_layers=hidden_layers,
+            hidden_neurons=hidden_neurons,
+            activation_function=activation_function
+        )
         self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
         
         self.training_manager_instance = TrainingManager(
