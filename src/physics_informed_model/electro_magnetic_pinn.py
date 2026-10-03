@@ -9,12 +9,17 @@ class ElectroMagneticPINN:
         self.geometry_engine_instance = geometry_engine_instance
         self.collocation_sampler_instance = collocation_sampler_instance
         
-        self.L0 = self.collocation_sampler_instance.x_maximum
+        # Tham chiếu dựa trên kích thước miền lấy mẫu lớn nhất
+        self.L0 = max(abs(self.collocation_sampler_instance.x_maximum), abs(self.collocation_sampler_instance.x_minimum))
         self.H0 = 800000.0
         self.nu0 = self.geometry_engine_instance.vacuum_reluctivity
         self.A0 = (self.H0 * self.L0) / self.nu0
         
-        self.pinn_architecture_instance = PINNArchitecture(domain_scale=self.L0)
+        # [CẬP NHẬT] Truyền trực tiếp giới hạn không gian để tính biên tổng quát
+        self.pinn_architecture_instance = PINNArchitecture(
+            x_bounds=(self.collocation_sampler_instance.x_minimum, self.collocation_sampler_instance.x_maximum),
+            y_bounds=(self.collocation_sampler_instance.y_minimum, self.collocation_sampler_instance.y_maximum)
+        )
         self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
         
         self.training_manager_instance = TrainingManager(
@@ -35,7 +40,6 @@ class ElectroMagneticPINN:
             distance_threshold=distance_threshold
         )
         
-        # Chỉ cần truyền points_tensor, các thuộc tính vật lý sẽ được tính động bên trong
         self.curriculum_training_manager_instance.train_source_ramping(
             stages=stages,
             epochs_per_stage=epochs_per_stage,
