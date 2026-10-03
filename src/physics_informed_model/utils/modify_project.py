@@ -1,43 +1,135 @@
 import os
 
-def sharpen_material_boundary():
+def reverse_magnet_direction():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     project_root_directory = os.path.abspath(os.path.join(base_directory, '..'))
     
-    geometry_file_path = os.path.join(project_root_directory, 'geometry_engine', 'geometry.py')
+    test_simulation_file_path = os.path.join(project_root_directory, 'test_simulation.py')
 
-    # Cập nhật steepness lên 2000.0 (hoặc bạn có thể tự tinh chỉnh con số này)
-    geometry_source_code = """import torch
+    test_simulation_source_code = """import os
+import sys
+
+current_directory = os.path.dirname(os.path.abspath(__file__))
+if current_directory not in sys.path:
+    sys.path.insert(0, current_directory)
+
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from geometry_engine.geometry import Geometry
 from geometry_engine.segment.segment import Segment
-from geometry_engine.global_signed_distance_field import compute_global_signed_distance_field
-from geometry_engine.global_physical_properties_evaluation import evaluate_global_physical_properties
-from geometry_engine.geometry_visualizer import plot_geometry_problem
+from physics_domain.collocation_sampler import CollocationSampler
+from electro_magnetic_pinn import ElectroMagneticPINN
 
-class Geometry:
-    # [CẬP NHẬT]: Tăng độ dốc (steepness) lên 2000.0 để biên dạng vật liệu sắc nét và dốc hơn
-    def __init__(self, steepness=2000.0):
-        self.segments_list = []
-        self.vacuum_reluctivity = 795774.715459
-        self.steepness = steepness
+def main():
+    geometry_instance = Geometry()
+    
+    top_magnet_vertices = [
+        [-0.03, 0.015],
+        [0.03, 0.015],
+        [0.03, 0.025],
+        [-0.03, 0.025]
+    ]
+    top_magnet = Segment(top_magnet_vertices).set_material_properties(
+        name="top_magnet",
+        relative_permeability=1.05,
+        coercive_field_x=800000.0,
+        coercive_field_y=0.0
+    )
+    geometry_instance.add_segment(top_magnet)
 
-    def add_segment(self, segment_object):
-        self.segments_list.append(segment_object)
-        return self
+    bottom_magnet_vertices = [
+        [-0.03, -0.025],
+        [0.03, -0.025],
+        [0.03, -0.015],
+        [-0.03, -0.015]
+    ]
+    bottom_magnet = Segment(bottom_magnet_vertices).set_material_properties(
+        name="bottom_magnet",
+        relative_permeability=1.05,
+        coercive_field_x=800000.0,
+        coercive_field_y=0.0
+    )
+    geometry_instance.add_segment(bottom_magnet)
+    
+    collocation_sampler_instance = CollocationSampler(
+        x_boundaries_tuple=(-0.05, 0.05),
+        y_boundaries_tuple=(-0.05, 0.05)
+    )
 
-    def compute_global_signed_distance_field(self, points_tensor):
-        return compute_global_signed_distance_field(self.segments_list, points_tensor)
+    geometry_instance.plot_problem_definition(
+        x_boundaries_tuple=(-0.05, 0.05),
+        y_boundaries_tuple=(-0.05, 0.05),
+        resolution=100
+    )
 
-    def evaluate_global_physical_properties(self, points_tensor):
-        return evaluate_global_physical_properties(self.segments_list, points_tensor, self.vacuum_reluctivity, self.steepness)
-
-    def plot_problem_definition(self, x_boundaries_tuple, y_boundaries_tuple, resolution=100):
-        plot_geometry_problem(self, x_boundaries_tuple, y_boundaries_tuple, resolution)
-"""
-
-    with open(geometry_file_path, 'w', encoding='utf-8') as f:
-        f.write(geometry_source_code)
-        
-    print("Đã tăng độ dốc (steepness) ranh giới vật liệu thành công!")
+    model = ElectroMagneticPINN(
+        geometry_engine_instance=geometry_instance,
+        collocation_sampler_instance=collocation_sampler_instance
+    )
+    
+    model.execute_training_process(
+        number_of_uniform_points=2500,
+        number_of_interface_points=800,
+        distance_threshold=0.005,
+        stages=2,
+        epochs_per_stage=400
+    )
+    
+    print("Đang tạo biểu đồ trực quan hóa kết quả trường điện từ...")
+    resolution = 120
+    x_coords = np.linspace(-0.05, 0.05, resolution)
+    y_coords = np.linspace(-0.05, 0.05, resolution)
+    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
+    
+    xy_points_tensor = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
+    
+    A_z_pred, B_x_pred, B_y_pred = model.evaluate_fields(xy_points_tensor)
+    
+    A_z_grid = A_z_pred.numpy().reshape(resolution, resolution)
+    B_x_grid = B_x_pred.numpy().reshape(resolution, resolution)
+    B_y_grid = B_y_pred.numpy().reshape(resolution, resolution)
+    B_mag_grid = np.sqrt(B_x_grid**2 + B_y_grid**2)
+    
+    fig, axs = plt.subplots(2, 2, figsize=(12, 10))
+    
+    contour_az = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
+    fig.colorbar(contour_az, ax=axs[0, 0], label="A_z (Wb/m)")
+    axs[0, 0].set_title("Magnetic Vector Potential ($A_z$)")
+    axs[0, 0].set_xlabel("x (m)")
+    axs[0, 0].set_ylabel("y (m)")
+    axs[0, 0].set_aspect('equal')
+    
+    contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
+    fig.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
+    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($|B|$)")
+    axs[0, 1].set_xlabel("x (m)")
+    axs[0, 1].set_ylabel("y (m)")
+    axs[0, 1].set_aspect('equal')
+    
+    contour_bx = axs[1, 0].contourf(X_grid, Y_grid, B_x_grid, levels=60, cmap="coolwarm")
+    fig.colorbar(contour_bx, ax=axs[1, 0], label="B_x (T)")
+    axs[1, 0].set_title("Magnetic Field Component ($B_x$)")
+    axs[1, 0].set_xlabel("x (m)")
+    axs[1, 0].set_ylabel("y (m)")
+    axs[1, 0].set_aspect('equal')
+    
+    contour_by = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=60, cmap="coolwarm")
+    fig.colorbar(contour_by, ax=axs[1, 1], label="B_y (T)")
+    axs[1, 1].set_title("Magnetic Field Component ($B_y$)")
+    axs[1, 1].set_xlabel("x (m)")
+    axs[1, 1].set_ylabel("y (m)")
+    axs[1, 1].set_aspect('equal')
+    
+    plt.tight_layout()
+    plt.show()
 
 if __name__ == '__main__':
-    sharpen_material_boundary()
+    main()
+"""
+
+    with open(test_simulation_file_path, 'w', encoding='utf-8') as f:
+        f.write(test_simulation_source_code)
+        
+if __name__ == '__main__':
+    reverse_magnet_direction()

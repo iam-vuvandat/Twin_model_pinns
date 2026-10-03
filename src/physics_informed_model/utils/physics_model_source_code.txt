@@ -83,8 +83,15 @@ class ElectroMagneticPINN:
         self.geometry_engine_instance = geometry_engine_instance
         self.collocation_sampler_instance = collocation_sampler_instance
         
-        self.pinn_architecture_instance = PINNArchitecture(domain_scale=self.collocation_sampler_instance.x_maximum)
-        self.maxwell_pde_loss_instance = MaxwellPDELoss()
+        # Khởi tạo các hệ số chuẩn hóa (Non-dimensionalization scaling factors)
+        self.L0 = self.collocation_sampler_instance.x_maximum
+        self.H0 = 800000.0
+        self.nu0 = self.geometry_engine_instance.vacuum_reluctivity
+        # Hằng số chuẩn hóa hệ quả cho Từ thế vector
+        self.A0 = (self.H0 * self.L0) / self.nu0
+        
+        self.pinn_architecture_instance = PINNArchitecture(domain_scale=self.L0)
+        self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
         
         self.training_manager_instance = TrainingManager(
             model=self.pinn_architecture_instance,
@@ -118,19 +125,23 @@ class ElectroMagneticPINN:
     def predict_magnetic_vector_potential(self, points_tensor):
         self.pinn_architecture_instance.eval()
         with torch.no_grad():
-            magnetic_vector_potential_z_tensor = self.pinn_architecture_instance(points_tensor)
-        return magnetic_vector_potential_z_tensor
+            A_z_star = self.pinn_architecture_instance(points_tensor)
+        # Trả về giá trị vật lý thực tế: A_phys = A_star * A_0
+        return A_z_star * self.A0
 
     def evaluate_fields(self, points_tensor):
         self.pinn_architecture_instance.eval()
         points_tensor.requires_grad_(True)
         
-        A_z = self.pinn_architecture_instance(points_tensor)
+        A_z_star = self.pinn_architecture_instance(points_tensor)
+        
+        # Khôi phục A_z về đơn vị vật lý trước khi lấy đạo hàm B
+        A_z_phys = A_z_star * self.A0
         
         grad_A = torch.autograd.grad(
-            outputs=A_z,
+            outputs=A_z_phys,
             inputs=points_tensor,
-            grad_outputs=torch.ones_like(A_z),
+            grad_outputs=torch.ones_like(A_z_phys),
             create_graph=False,
             retain_graph=False
         )[0]
@@ -138,7 +149,7 @@ class ElectroMagneticPINN:
         B_x = grad_A[:, 1:2]
         B_y = -grad_A[:, 0:1]
         
-        return A_z.detach(), B_x.detach(), B_y.detach()
+        return A_z_phys.detach(), B_x.detach(), B_y.detach()
 
 ========================================
 
@@ -218,11 +229,11 @@ class PINNArchitecture(nn.Module):
         
         layers = []
         layers.append(nn.Linear(input_dim, hidden_neurons))
-        layers.append(nn.SiLU())
+        layers.append(nn.Tanh())
         
         for _ in range(hidden_layers - 1):
             layers.append(nn.Linear(hidden_neurons, hidden_neurons))
-            layers.append(nn.SiLU())
+            layers.append(nn.Tanh())
             
         layers.append(nn.Linear(hidden_neurons, output_dim))
         
@@ -236,7 +247,6 @@ class PINNArchitecture(nn.Module):
                 nn.init.zeros_(module.bias)
 
     def boundary_factor(self, xy):
-        # Tính toán Boundary Factor để ép A_z = 0 tại rìa miền khảo sát (domain_scale)
         x_factor = 1.0 - (xy[:, 0:1] / self.domain_scale)**2
         y_factor = 1.0 - (xy[:, 1:2] / self.domain_scale)**2
         return x_factor * y_factor
@@ -245,9 +255,8 @@ class PINNArchitecture(nn.Module):
         xy_normalized = xy / self.domain_scale
         raw_output = self.network(xy_normalized)
         
-        # [CẬP NHẬT]: Nhân với true boundary_factor, loại bỏ sdf_boundary của vật liệu
-        A_z = raw_output * self.boundary_factor(xy)
-        return A_z
+        A_z_star = raw_output * self.boundary_factor(xy)
+        return A_z_star
 
 ========================================
 
@@ -381,10 +390,10 @@ import torch
 import torch.optim as optim
 
 class TrainingManager:
-    def __init__(self, model, pde_evaluator, lr_adam=1e-3, loss_scaling_factor=2e-9):
+    # [CẬP NHẬT]: Đã gỡ bỏ loss_scaling_factor vì hệ thống đã tự cân bằng vật lý
+    def __init__(self, model, pde_evaluator, lr_adam=1e-3):
         self.model = model
         self.pde_evaluator = pde_evaluator
-        self.loss_scaling_factor = loss_scaling_factor
         
         self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
         
@@ -400,19 +409,19 @@ class TrainingManager:
         )
 
     def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        magnetic_vector_potential_z_tensor = self.model(points_tensor)
+        A_z_star = self.model(points_tensor)
         
-        residual = self.pde_evaluator.compute_residual(
+        residual_star = self.pde_evaluator.compute_residual(
             xy=points_tensor,
-            A_z=magnetic_vector_potential_z_tensor,
+            A_z_star=A_z_star,
             nu=reluctivity_tensor,
             J_z=current_density_z_tensor,
             H_cx=coercive_field_x_tensor,
             H_cy=coercive_field_y_tensor
         )
         
-        residual_scaled = residual * self.loss_scaling_factor
-        loss_pde = torch.mean(residual_scaled**2)
+        # Loss tính toán trực tiếp trên phần dư chuẩn hóa
+        loss_pde = torch.mean(residual_star**2)
         return loss_pde
 
     def train_adam(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
@@ -476,8 +485,8 @@ from geometry_engine.global_physical_properties_evaluation import evaluate_globa
 from geometry_engine.geometry_visualizer import plot_geometry_problem
 
 class Geometry:
-    # [CẬP NHẬT]: Steepness = 300.0 giúp vùng giao diện mở rộng ra, mạng nơ-ron dễ dàng nắm bắt đạo hàm
-    def __init__(self, steepness=300.0):
+    # [CẬP NHẬT]: Tăng độ dốc (steepness) lên 2000.0 để biên dạng vật liệu sắc nét và dốc hơn
+    def __init__(self, steepness=2000.0):
         self.segments_list = []
         self.vacuum_reluctivity = 795774.715459
         self.steepness = steepness
@@ -835,44 +844,59 @@ class CollocationSampler:
 import torch
 
 class MaxwellPDELoss:
-    def __init__(self):
-        pass
+    def __init__(self, L0=0.05, H0=800000.0, nu0=795774.715459):
+        # Các hằng số tham chiếu để chuẩn hóa (Non-dimensionalization constants)
+        self.L0 = L0
+        self.H0 = H0
+        self.nu0 = nu0
 
-    def compute_residual(self, xy, A_z, nu, J_z, H_cx, H_cy):
-        grad_A = torch.autograd.grad(
-            outputs=A_z,
+    def compute_residual(self, xy, A_z_star, nu, J_z, H_cx, H_cy):
+        # 1. Biến đổi đại lượng vật lý thành đại lượng không thứ nguyên (Dimensionless variables)
+        nu_star = nu / self.nu0
+        H_cx_star = H_cx / self.H0
+        H_cy_star = H_cy / self.H0
+        # Mật độ dòng J = curl(H) -> J_0 = H_0 / L_0
+        J_z_star = J_z / (self.H0 / self.L0)
+        
+        # 2. Lấy đạo hàm của A_z_star theo x, y (lưu ý xy là tọa độ vật lý)
+        grad_A_star = torch.autograd.grad(
+            outputs=A_z_star,
             inputs=xy,
-            grad_outputs=torch.ones_like(A_z),
+            grad_outputs=torch.ones_like(A_z_star),
             create_graph=True,
             retain_graph=True
         )[0]
         
-        dAz_dx = grad_A[:, 0:1]
-        dAz_dy = grad_A[:, 1:2]
+        # Chuyển đổi vi phân: d/dx = (1/L0) * d/dx_star -> d/dx_star = d/dx * L0
+        dAz_star_dx_star = grad_A_star[:, 0:1] * self.L0
+        dAz_star_dy_star = grad_A_star[:, 1:2] * self.L0
         
-        H_x = nu * dAz_dy - H_cx
-        H_y = -nu * dAz_dx - H_cy
+        # 3. Tính từ trường không thứ nguyên
+        H_x_star = nu_star * dAz_star_dy_star - H_cx_star
+        H_y_star = -nu_star * dAz_star_dx_star - H_cy_star
         
-        grad_Hx = torch.autograd.grad(
-            outputs=H_x,
+        # 4. Lấy đạo hàm của H_star theo x, y vật lý
+        grad_Hx_star = torch.autograd.grad(
+            outputs=H_x_star,
             inputs=xy,
-            grad_outputs=torch.ones_like(H_x),
+            grad_outputs=torch.ones_like(H_x_star),
             create_graph=True,
             retain_graph=True
         )[0]
-        dHx_dy = grad_Hx[:, 1:2]
+        dHx_star_dy_star = grad_Hx_star[:, 1:2] * self.L0
         
-        grad_Hy = torch.autograd.grad(
-            outputs=H_y,
+        grad_Hy_star = torch.autograd.grad(
+            outputs=H_y_star,
             inputs=xy,
-            grad_outputs=torch.ones_like(H_y),
+            grad_outputs=torch.ones_like(H_y_star),
             create_graph=True,
             retain_graph=True
         )[0]
-        dHy_dx = grad_Hy[:, 0:1]
+        dHy_star_dx_star = grad_Hy_star[:, 0:1] * self.L0
         
-        residual = dHy_dx - dHx_dy - J_z
-        return residual
+        # 5. Phương trình dư không thứ nguyên (Dimensionless Residual) sẽ mang biên độ ~1
+        residual_star = dHy_star_dx_star - dHx_star_dy_star - J_z_star
+        return residual_star
 
 ========================================
 
@@ -880,222 +904,44 @@ class MaxwellPDELoss:
 
 import os
 
-def update_loss_and_colormap():
+def sharpen_material_boundary():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     project_root_directory = os.path.abspath(os.path.join(base_directory, '..'))
     
-    training_manager_file_path = os.path.join(project_root_directory, 'training_manager.py')
-    test_simulation_file_path = os.path.join(project_root_directory, 'test_simulation.py')
+    geometry_file_path = os.path.join(project_root_directory, 'geometry_engine', 'geometry.py')
 
-    # 1. Cập nhật TrainingManager với hệ số scale phù hợp để loss đạt cỡ mũ -3
-    training_manager_source_code = """import torch
-import torch.optim as optim
+    # Cập nhật steepness lên 2000.0 (hoặc bạn có thể tự tinh chỉnh con số này)
+    geometry_source_code = """import torch
+from geometry_engine.segment.segment import Segment
+from geometry_engine.global_signed_distance_field import compute_global_signed_distance_field
+from geometry_engine.global_physical_properties_evaluation import evaluate_global_physical_properties
+from geometry_engine.geometry_visualizer import plot_geometry_problem
 
-class TrainingManager:
-    def __init__(self, model, pde_evaluator, lr_adam=1e-3, loss_scaling_factor=2e-9):
-        self.model = model
-        self.pde_evaluator = pde_evaluator
-        self.loss_scaling_factor = loss_scaling_factor
-        
-        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
-        
-        self.optimizer_lbfgs = optim.LBFGS(
-            self.model.parameters(),
-            lr=1.0,
-            max_iter=50,
-            max_eval=50,
-            tolerance_grad=1e-7,
-            tolerance_change=1e-9,
-            history_size=100,
-            line_search_fn="strong_wolfe"
-        )
+class Geometry:
+    # [CẬP NHẬT]: Tăng độ dốc (steepness) lên 2000.0 để biên dạng vật liệu sắc nét và dốc hơn
+    def __init__(self, steepness=2000.0):
+        self.segments_list = []
+        self.vacuum_reluctivity = 795774.715459
+        self.steepness = steepness
 
-    def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        magnetic_vector_potential_z_tensor = self.model(points_tensor)
-        
-        residual = self.pde_evaluator.compute_residual(
-            xy=points_tensor,
-            A_z=magnetic_vector_potential_z_tensor,
-            nu=reluctivity_tensor,
-            J_z=current_density_z_tensor,
-            H_cx=coercive_field_x_tensor,
-            H_cy=coercive_field_y_tensor
-        )
-        
-        residual_scaled = residual * self.loss_scaling_factor
-        loss_pde = torch.mean(residual_scaled**2)
-        return loss_pde
+    def add_segment(self, segment_object):
+        self.segments_list.append(segment_object)
+        return self
 
-    def train_adam(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        self.model.train()
-        best_loss = float('inf')
-        best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
-        
-        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
-        
-        for epoch in range(epochs):
-            self.optimizer_adam.zero_grad()
-            
-            loss = self.compute_loss(
-                points_tensor, reluctivity_tensor, 
-                current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
-            )
-            
-            if torch.isnan(loss) or loss.item() > 1.5 * best_loss:
-                self.model.load_state_dict(best_model_state)
-                for param_group in self.optimizer_adam.param_groups:
-                    param_group['lr'] *= 0.8
-                continue
-                
-            loss.backward(retain_graph=True)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-            self.optimizer_adam.step()
-            scheduler_adam.step()
-            
-            current_loss_value = loss.item()
-            if current_loss_value < best_loss:
-                best_loss = current_loss_value
-                best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
-            
-            if (epoch + 1) % 100 == 0:
-                current_lr = self.optimizer_adam.param_groups[0]['lr']
-                print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {current_lr:.3e}")
+    def compute_global_signed_distance_field(self, points_tensor):
+        return compute_global_signed_distance_field(self.segments_list, points_tensor)
 
-    def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        self.model.train()
-        for epoch in range(epochs):
-            def closure():
-                self.optimizer_lbfgs.zero_grad()
-                loss = self.compute_loss(
-                    points_tensor, reluctivity_tensor, 
-                    current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
-                )
-                loss.backward(retain_graph=True)
-                return loss
-            
-            loss_val = self.optimizer_lbfgs.step(closure)
-            print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
+    def evaluate_global_physical_properties(self, points_tensor):
+        return evaluate_global_physical_properties(self.segments_list, points_tensor, self.vacuum_reluctivity, self.steepness)
+
+    def plot_problem_definition(self, x_boundaries_tuple, y_boundaries_tuple, resolution=100):
+        plot_geometry_problem(self, x_boundaries_tuple, y_boundaries_tuple, resolution)
 """
 
-    # 2. Cập nhật test_simulation.py để đổi colormap của đồ thị |B| thành rainbow
-    test_simulation_source_code = """import os
-import sys
-
-current_directory = os.path.dirname(os.path.abspath(__file__))
-if current_directory not in sys.path:
-    sys.path.insert(0, current_directory)
-
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-from geometry_engine.geometry import Geometry
-from geometry_engine.segment.segment import Segment
-from physics_domain.collocation_sampler import CollocationSampler
-from electro_magnetic_pinn import ElectroMagneticPINN
-
-def main():
-    geometry_instance = Geometry()
-    
-    top_magnet_vertices = [
-        [-0.03, 0.015],
-        [0.03, 0.015],
-        [0.03, 0.025],
-        [-0.03, 0.025]
-    ]
-    top_magnet = Segment(top_magnet_vertices).set_material_properties(
-        name="top_magnet",
-        relative_permeability=1.05,
-        coercive_field_x=800000.0,
-        coercive_field_y=0.0
-    )
-    geometry_instance.add_segment(top_magnet)
-
-    bottom_magnet_vertices = [
-        [-0.03, -0.025],
-        [0.03, -0.025],
-        [0.03, -0.015],
-        [-0.03, -0.015]
-    ]
-    bottom_magnet = Segment(bottom_magnet_vertices).set_material_properties(
-        name="bottom_magnet",
-        relative_permeability=1.05,
-        coercive_field_x=-800000.0,
-        coercive_field_y=0.0
-    )
-    geometry_instance.add_segment(bottom_magnet)
-    
-    collocation_sampler_instance = CollocationSampler(
-        x_boundaries_tuple=(-0.05, 0.05),
-        y_boundaries_tuple=(-0.05, 0.05)
-    )
-
-    geometry_instance.plot_problem_definition(
-        x_boundaries_tuple=(-0.05, 0.05),
-        y_boundaries_tuple=(-0.05, 0.05),
-        resolution=100
-    )
-
-    model = ElectroMagneticPINN(
-        geometry_engine_instance=geometry_instance,
-        collocation_sampler_instance=collocation_sampler_instance
-    )
-    
-    model.execute_training_process(
-        number_of_uniform_points=2500,
-        number_of_interface_points=800,
-        distance_threshold=0.005,
-        stages=2,
-        epochs_per_stage=400
-    )
-    
-    print("Đang tạo biểu đồ trực quan hóa kết quả trường điện từ...")
-    resolution = 120
-    x_coords = np.linspace(-0.05, 0.05, resolution)
-    y_coords = np.linspace(-0.05, 0.05, resolution)
-    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
-    
-    xy_points_tensor = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
-    
-    A_z_pred, B_x_pred, B_y_pred = model.evaluate_fields(xy_points_tensor)
-    
-    A_z_grid = A_z_pred.numpy().reshape(resolution, resolution)
-    B_x_grid = B_x_pred.numpy().reshape(resolution, resolution)
-    B_y_grid = B_y_pred.numpy().reshape(resolution, resolution)
-    B_mag_grid = np.sqrt(B_x_grid**2 + B_y_grid**2)
-    
-    fig, axs = plt.subplots(2, 2, figsize=(12, 10))
-    
-    contour_az = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
-    fig.colorbar(contour_az, ax=axs[0, 0], label="A_z (Wb/m)")
-    axs[0, 0].set_title("Magnetic Vector Potential ($A_z$)")
-    axs[0, 0].set_xlabel("x (m)")
-    axs[0, 0].set_ylabel("y (m)")
-    axs[0, 0].set_aspect('equal')
-    
-    # Đã đổi cmap thành rainbow cho đồ thị |B|
-    contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
-    fig.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
-    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($|B|$")
-    axs[0, 1].set_xlabel("x (m)")
-    axs[0, 1].set_ylabel("y (m)")
-    axs[0, 1].set_aspect('equal')
-    
-    contour_bx = axs[1, 0].contourf(X_grid, Y_grid, B_x_grid, levels=60, cmap="coolwarm")
-    fig.colorbar(contour_bx, ax=axs[1, 0], label="B_x (T)")
-    axs[1, 0].set_title("Magnetic Field Component ($B_x$)")
-    axs[1, 0].set_xlabel("x (m)")
-    axs[1, 0].set_ylabel("y (m)")
-    axs[1, 0].set_aspect('equal')
-    
-    contour_by = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=60, cmap="coolwarm")
-    fig.colorbar(contour_by, ax=axs[1, 1], label="B_y (T)")
-    axs[1, 1].set_title("Magnetic Field Component ($B_y$)")
-    axs[1, 1].set_xlabel("x (m)")
-    axs[1, 1].set_ylabel("y (m)")
-    axs[1, 1].set_aspect('equal')
-    
-    plt.tight_layout()
-    plt.show()
+    with open(geometry_file_path, 'w', encoding='utf-8') as f:
+        f.write(geometry_source_code)
+        
+    print("Đã tăng độ dốc (steepness) ranh giới vật liệu thành công!")
 
 
 ========================================
