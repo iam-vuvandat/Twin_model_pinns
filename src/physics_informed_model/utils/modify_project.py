@@ -1,6 +1,6 @@
 import os
 
-def restore_stable_project():
+def restore_full_stable_project():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     project_root_directory = os.path.abspath(os.path.join(base_directory, '..'))
     
@@ -20,7 +20,7 @@ def restore_stable_project():
 
     # 1. curriculum_training_manager.py
     with open(curriculum_path, 'w', encoding='utf-8') as f:
-        f.write('''import torch
+        f.write("""import torch
 from training_manager import TrainingManager
 
 class CurriculumTrainingManager:
@@ -56,11 +56,11 @@ class CurriculumTrainingManager:
             coercive_field_x_tensor=coercive_field_x_tensor, 
             coercive_field_y_tensor=coercive_field_y_tensor
         )
-''')
+""")
 
     # 2. electro_magnetic_pinn.py
     with open(electro_magnetic_path, 'w', encoding='utf-8') as f:
-        f.write('''import torch
+        f.write("""import torch
 from pinn_architecture import PINNArchitecture
 from training_manager import TrainingManager
 from curriculum_training_manager import CurriculumTrainingManager
@@ -133,11 +133,11 @@ class ElectroMagneticPINN:
         B_y = -grad_A[:, 0:1]
         
         return A_z_phys.detach(), B_x.detach(), B_y.detach()
-''')
+""")
 
     # 3. pinn_architecture.py
     with open(pinn_architecture_path, 'w', encoding='utf-8') as f:
-        f.write('''import torch
+        f.write("""import torch
 import torch.nn as nn
 
 class PINNArchitecture(nn.Module):
@@ -147,11 +147,11 @@ class PINNArchitecture(nn.Module):
         
         layers = []
         layers.append(nn.Linear(input_dim, hidden_neurons))
-        layers.append(nn.Tanh())
+        layers.append(nn.SiLU())
         
         for _ in range(hidden_layers - 1):
             layers.append(nn.Linear(hidden_neurons, hidden_neurons))
-            layers.append(nn.Tanh())
+            layers.append(nn.SiLU())
             
         layers.append(nn.Linear(hidden_neurons, output_dim))
         
@@ -175,11 +175,11 @@ class PINNArchitecture(nn.Module):
         
         A_z_star = raw_output * self.boundary_factor(xy)
         return A_z_star
-''')
+""")
 
     # 4. test_simulation.py
     with open(test_simulation_path, 'w', encoding='utf-8') as f:
-        f.write('''import os
+        f.write("""import os
 import sys
 
 current_directory = os.path.dirname(os.path.abspath(__file__))
@@ -299,11 +299,11 @@ def main():
 
 if __name__ == '__main__':
     main()
-''')
+""")
 
     # 5. training_manager.py
     with open(training_manager_path, 'w', encoding='utf-8') as f:
-        f.write('''import torch
+        f.write("""import torch
 import torch.optim as optim
 
 class TrainingManager:
@@ -388,18 +388,18 @@ class TrainingManager:
             
             loss_val = self.optimizer_lbfgs.step(closure)
             print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
-''')
+""")
 
     # 6. geometry.py
     with open(geometry_path, 'w', encoding='utf-8') as f:
-        f.write('''import torch
+        f.write("""import torch
 from geometry_engine.segment.segment import Segment
 from geometry_engine.global_signed_distance_field import compute_global_signed_distance_field
 from geometry_engine.global_physical_properties_evaluation import evaluate_global_physical_properties
 from geometry_engine.geometry_visualizer import plot_geometry_problem
 
 class Geometry:
-    def __init__(self, steepness=2000.0):
+    def __init__(self, steepness=300.0):
         self.segments_list = []
         self.vacuum_reluctivity = 795774.715459
         self.steepness = steepness
@@ -416,11 +416,11 @@ class Geometry:
 
     def plot_problem_definition(self, x_boundaries_tuple, y_boundaries_tuple, resolution=100):
         plot_geometry_problem(self, x_boundaries_tuple, y_boundaries_tuple, resolution)
-''')
+""")
 
     # 7. geometry_visualizer.py
     with open(geometry_visualizer_path, 'w', encoding='utf-8') as f:
-        f.write('''import torch
+        f.write("""import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -481,11 +481,11 @@ def plot_geometry_problem(geometry_instance, x_boundaries_tuple, y_boundaries_tu
     
     plt.tight_layout()
     plt.show()
-''')
+""")
 
     # 8. global_physical_properties_evaluation.py
     with open(global_eval_path, 'w', encoding='utf-8') as f:
-        f.write('''import torch
+        f.write("""import torch
 
 def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_reluctivity, steepness=5000.0):
     number_of_points = points_tensor.shape[0]
@@ -524,11 +524,11 @@ def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_rel
         "current_density_z": global_current_density_z_tensor,
         "material_classification": global_material_classification_tensor
     }
-''')
+""")
 
     # 9. global_signed_distance_field.py
     with open(global_sdf_path, 'w', encoding='utf-8') as f:
-        f.write('''import torch
+        f.write("""import torch
 
 def compute_global_signed_distance_field(segments_list, points_tensor):
     if not segments_list:
@@ -541,11 +541,11 @@ def compute_global_signed_distance_field(segments_list, points_tensor):
         global_signed_distance_field = torch.minimum(global_signed_distance_field, current_signed_distance_field)
         
     return global_signed_distance_field
-''')
+""")
 
     # 10. polygon_signed_distance_field.py
     with open(polygon_sdf_path, 'w', encoding='utf-8') as f:
-        f.write('''import torch
+        f.write("""import torch
 
 def compute_polygon_signed_distance_field(vertices_tensor, points_tensor):
     if vertices_tensor is None:
@@ -613,11 +613,11 @@ def compute_polygon_signed_distance_field(vertices_tensor, points_tensor):
     )
     
     return distance_sign * minimum_distances
-''')
+""")
 
     # 11. segment.py
     with open(segment_path, 'w', encoding='utf-8') as f:
-        f.write('''import torch
+        f.write("""import torch
 from geometry_engine.segment.polygon_signed_distance_field import compute_polygon_signed_distance_field
 
 class Segment:
@@ -684,11 +684,11 @@ class Segment:
         if self.current_density_function is not None:
             return self.current_density_function(points_tensor)
         return torch.full((points_tensor.shape[0], 1), self.current_density_z_axis, dtype=torch.float32, device=points_tensor.device)
-''')
+""")
 
     # 12. collocation_sampler.py
     with open(collocation_path, 'w', encoding='utf-8') as f:
-        f.write('''import torch
+        f.write("""import torch
 
 class CollocationSampler:
     def __init__(self, x_boundaries_tuple, y_boundaries_tuple):
@@ -737,11 +737,11 @@ class CollocationSampler:
         combined_points_tensor = combined_points_tensor.detach().clone()
         combined_points_tensor.requires_grad_(True)
         return combined_points_tensor
-''')
+""")
 
     # 13. maxwell_pde_loss.py
     with open(maxwell_loss_path, 'w', encoding='utf-8') as f:
-        f.write('''import torch
+        f.write("""import torch
 
 class MaxwellPDELoss:
     def __init__(self, L0=0.05, H0=800000.0, nu0=795774.715459):
@@ -789,9 +789,9 @@ class MaxwellPDELoss:
         
         residual_star = dHy_star_dx_star - dHx_star_dy_star - J_z_star
         return residual_star
-''')
+""")
 
-    print("Khôi phục toàn văn dự án về trạng thái ổn định thành công!")
+    print("Đã khôi phục thành công toàn bộ mã nguồn về phiên bản ổn định (với Curriculum Training, SiLU và steepness 300.0).")
 
 if __name__ == '__main__':
-    restore_stable_project()
+    restore_full_stable_project()
