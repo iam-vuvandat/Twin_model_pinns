@@ -5,7 +5,6 @@ from geometry_engine.global_physical_properties_evaluation import evaluate_globa
 from geometry_engine.geometry_visualizer import plot_geometry_problem
 
 class Geometry:
-    # [CẬP NHẬT]: Tăng độ dốc (steepness) lên 2000.0 để biên dạng vật liệu sắc nét và dốc hơn
     def __init__(self, steepness=2000.0):
         self.segments_list = []
         self.vacuum_reluctivity = 795774.715459
