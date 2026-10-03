@@ -1,5 +1,5 @@
 """
-version 1.1.1.1
+version 1.2.0 - Updated with Flexible PINN API and Steepness
 """
 import os
 import sys
@@ -9,6 +9,7 @@ if current_directory not in sys.path:
     sys.path.insert(0, current_directory)
 
 import torch
+import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
 from geometry_engine.geometry import Geometry
@@ -17,7 +18,8 @@ from physics_domain.collocation_sampler import CollocationSampler
 from electro_magnetic_pinn import ElectroMagneticPINN
 
 def main():
-    geometry_instance = Geometry()
+    # 1. Khởi tạo hình học với ranh giới gắt hơn (steepness=5000.0)
+    geometry_instance = Geometry(steepness=5000.0)
     
     top_magnet_vertices = [
         [-0.03, 0.015],
@@ -58,9 +60,13 @@ def main():
         resolution=100
     )
 
+    # 2. Sử dụng API linh hoạt để cấu hình mạng PINN
     model = ElectroMagneticPINN(
         geometry_engine_instance=geometry_instance,
-        collocation_sampler_instance=collocation_sampler_instance
+        collocation_sampler_instance=collocation_sampler_instance,
+        hidden_layers=6,               # Thay đổi từ 4 lên 6 lớp
+        hidden_neurons=64,             # Thay đổi từ 50 lên 64 nơ-ron
+        activation_function=nn.Tanh()  # Đổi hàm kích hoạt sang Tanh
     )
     
     model.execute_training_process(
@@ -146,5 +152,5 @@ def main():
     # Hiển thị tất cả các biểu đồ
     plt.show()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
