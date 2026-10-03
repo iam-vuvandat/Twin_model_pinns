@@ -5,7 +5,6 @@ class Segment:
     def __init__(self, vertices_list=None):
         self.material_name = "air"
         self.vacuum_reluctivity = 795774.715459
-        self.priority = 0
         
         self.relative_permeability = 1.0
         self.reluctivity_function = None
@@ -27,8 +26,7 @@ class Segment:
 
     def set_material_properties(
         self, 
-        name="default",
-        priority=0,
+        name="default", 
         relative_permeability=1.0, 
         reluctivity_function=None,
         coercive_field_x=0.0,
@@ -38,7 +36,6 @@ class Segment:
         current_density_function=None
     ):
         self.material_name = name
-        self.priority = priority
         self.relative_permeability = relative_permeability
         self.reluctivity_function = reluctivity_function
         self.coercive_field_x = coercive_field_x

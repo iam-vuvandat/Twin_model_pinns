@@ -13,12 +13,6 @@ from geometry_engine.segment.segment import Segment
 from physics_domain.collocation_sampler import CollocationSampler
 from electro_magnetic_pinn import ElectroMagneticPINN
 
-GLOBAL_SEED = 42
-torch.manual_seed(GLOBAL_SEED)
-np.random.seed(GLOBAL_SEED)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(GLOBAL_SEED)
-
 def main():
     geometry_instance = Geometry()
     
@@ -30,7 +24,6 @@ def main():
     ]
     top_magnet = Segment(top_magnet_vertices).set_material_properties(
         name="top_magnet",
-        priority=1,
         relative_permeability=1.05,
         coercive_field_x=800000.0,
         coercive_field_y=0.0
@@ -45,9 +38,8 @@ def main():
     ]
     bottom_magnet = Segment(bottom_magnet_vertices).set_material_properties(
         name="bottom_magnet",
-        priority=1,
         relative_permeability=1.05,
-        coercive_field_x=800000.0,
+        coercive_field_x=-800000.0,
         coercive_field_y=0.0
     )
     geometry_instance.add_segment(bottom_magnet)
@@ -75,13 +67,6 @@ def main():
         stages=2,
         epochs_per_stage=400
     )
-    
-    print("\n--- KẾT QUẢ CHẨN ĐOÁN (DIAGNOSTICS) ---")
-    diagnostics = model.evaluate_diagnostics(number_of_points=10000)
-    print(f"Số dư Maxwell RMS (R_RMS): {diagnostics['R_RMS']:.6e}")
-    print(f"Số dư cực đại (R_max):    {diagnostics['R_max']:.6e}")
-    print(f"Sai số rò rỉ biên (E_b):  {diagnostics['E_boundary']:.6e} Wb/m")
-    print("---------------------------------------\n")
     
     print("Đang tạo biểu đồ trực quan hóa kết quả trường điện từ...")
     resolution = 120
