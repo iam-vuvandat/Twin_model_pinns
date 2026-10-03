@@ -8,11 +8,11 @@ class PINNArchitecture(nn.Module):
         
         layers = []
         layers.append(nn.Linear(input_dim, hidden_neurons))
-        layers.append(nn.SiLU())
+        layers.append(nn.Tanh())
         
         for _ in range(hidden_layers - 1):
             layers.append(nn.Linear(hidden_neurons, hidden_neurons))
-            layers.append(nn.SiLU())
+            layers.append(nn.Tanh())
             
         layers.append(nn.Linear(hidden_neurons, output_dim))
         
@@ -26,7 +26,6 @@ class PINNArchitecture(nn.Module):
                 nn.init.zeros_(module.bias)
 
     def boundary_factor(self, xy):
-        # Tính toán Boundary Factor để ép A_z = 0 tại rìa miền khảo sát (domain_scale)
         x_factor = 1.0 - (xy[:, 0:1] / self.domain_scale)**2
         y_factor = 1.0 - (xy[:, 1:2] / self.domain_scale)**2
         return x_factor * y_factor
@@ -35,6 +34,5 @@ class PINNArchitecture(nn.Module):
         xy_normalized = xy / self.domain_scale
         raw_output = self.network(xy_normalized)
         
-        # [CẬP NHẬT]: Nhân với true boundary_factor, loại bỏ sdf_boundary của vật liệu
-        A_z = raw_output * self.boundary_factor(xy)
-        return A_z
+        A_z_star = raw_output * self.boundary_factor(xy)
+        return A_z_star

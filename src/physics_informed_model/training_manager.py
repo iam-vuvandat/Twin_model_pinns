@@ -2,10 +2,10 @@ import torch
 import torch.optim as optim
 
 class TrainingManager:
-    def __init__(self, model, pde_evaluator, lr_adam=1e-3, loss_scaling_factor=2e-9):
+    # [CẬP NHẬT]: Đã gỡ bỏ loss_scaling_factor vì hệ thống đã tự cân bằng vật lý
+    def __init__(self, model, pde_evaluator, lr_adam=1e-3):
         self.model = model
         self.pde_evaluator = pde_evaluator
-        self.loss_scaling_factor = loss_scaling_factor
         
         self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
         
@@ -21,19 +21,19 @@ class TrainingManager:
         )
 
     def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        magnetic_vector_potential_z_tensor = self.model(points_tensor)
+        A_z_star = self.model(points_tensor)
         
-        residual = self.pde_evaluator.compute_residual(
+        residual_star = self.pde_evaluator.compute_residual(
             xy=points_tensor,
-            A_z=magnetic_vector_potential_z_tensor,
+            A_z_star=A_z_star,
             nu=reluctivity_tensor,
             J_z=current_density_z_tensor,
             H_cx=coercive_field_x_tensor,
             H_cy=coercive_field_y_tensor
         )
         
-        residual_scaled = residual * self.loss_scaling_factor
-        loss_pde = torch.mean(residual_scaled**2)
+        # Loss tính toán trực tiếp trên phần dư chuẩn hóa
+        loss_pde = torch.mean(residual_star**2)
         return loss_pde
 
     def train_adam(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):

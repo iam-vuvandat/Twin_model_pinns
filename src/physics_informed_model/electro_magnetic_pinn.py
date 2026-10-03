@@ -9,8 +9,15 @@ class ElectroMagneticPINN:
         self.geometry_engine_instance = geometry_engine_instance
         self.collocation_sampler_instance = collocation_sampler_instance
         
-        self.pinn_architecture_instance = PINNArchitecture(domain_scale=self.collocation_sampler_instance.x_maximum)
-        self.maxwell_pde_loss_instance = MaxwellPDELoss()
+        # Khởi tạo các hệ số chuẩn hóa (Non-dimensionalization scaling factors)
+        self.L0 = self.collocation_sampler_instance.x_maximum
+        self.H0 = 800000.0
+        self.nu0 = self.geometry_engine_instance.vacuum_reluctivity
+        # Hằng số chuẩn hóa hệ quả cho Từ thế vector
+        self.A0 = (self.H0 * self.L0) / self.nu0
+        
+        self.pinn_architecture_instance = PINNArchitecture(domain_scale=self.L0)
+        self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
         
         self.training_manager_instance = TrainingManager(
             model=self.pinn_architecture_instance,
@@ -44,19 +51,23 @@ class ElectroMagneticPINN:
     def predict_magnetic_vector_potential(self, points_tensor):
         self.pinn_architecture_instance.eval()
         with torch.no_grad():
-            magnetic_vector_potential_z_tensor = self.pinn_architecture_instance(points_tensor)
-        return magnetic_vector_potential_z_tensor
+            A_z_star = self.pinn_architecture_instance(points_tensor)
+        # Trả về giá trị vật lý thực tế: A_phys = A_star * A_0
+        return A_z_star * self.A0
 
     def evaluate_fields(self, points_tensor):
         self.pinn_architecture_instance.eval()
         points_tensor.requires_grad_(True)
         
-        A_z = self.pinn_architecture_instance(points_tensor)
+        A_z_star = self.pinn_architecture_instance(points_tensor)
+        
+        # Khôi phục A_z về đơn vị vật lý trước khi lấy đạo hàm B
+        A_z_phys = A_z_star * self.A0
         
         grad_A = torch.autograd.grad(
-            outputs=A_z,
+            outputs=A_z_phys,
             inputs=points_tensor,
-            grad_outputs=torch.ones_like(A_z),
+            grad_outputs=torch.ones_like(A_z_phys),
             create_graph=False,
             retain_graph=False
         )[0]
@@ -64,4 +75,4 @@ class ElectroMagneticPINN:
         B_x = grad_A[:, 1:2]
         B_y = -grad_A[:, 0:1]
         
-        return A_z.detach(), B_x.detach(), B_y.detach()
+        return A_z_phys.detach(), B_x.detach(), B_y.detach()
