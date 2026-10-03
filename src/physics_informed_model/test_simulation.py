@@ -13,7 +13,6 @@ from geometry_engine.segment.segment import Segment
 from physics_domain.collocation_sampler import CollocationSampler
 from electro_magnetic_pinn import ElectroMagneticPINN
 
-# Tích hợp Global Seed đảm bảo tính Reproducibility
 GLOBAL_SEED = 42
 torch.manual_seed(GLOBAL_SEED)
 np.random.seed(GLOBAL_SEED)
@@ -74,6 +73,13 @@ def main():
         stages=2,
         epochs_per_stage=400
     )
+    
+    print("\n--- KẾT QUẢ CHẨN ĐOÁN (DIAGNOSTICS) ---")
+    diagnostics = model.evaluate_diagnostics(number_of_points=10000)
+    print(f"Số dư Maxwell RMS (R_RMS): {diagnostics['R_RMS']:.6e}")
+    print(f"Số dư cực đại (R_max):    {diagnostics['R_max']:.6e}")
+    print(f"Sai số rò rỉ biên (E_b):  {diagnostics['E_boundary']:.6e} Wb/m")
+    print("---------------------------------------\n")
     
     print("Đang tạo biểu đồ trực quan hóa kết quả trường điện từ...")
     resolution = 120

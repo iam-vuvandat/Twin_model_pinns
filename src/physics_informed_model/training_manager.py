@@ -1,5 +1,6 @@
 import torch
 import torch.optim as optim
+import copy
 
 class TrainingManager:
     def __init__(self, model, pde_evaluator, geometry_engine_instance, lr_adam=1e-3):
@@ -7,8 +8,12 @@ class TrainingManager:
         self.pde_evaluator = pde_evaluator
         self.geometry_engine_instance = geometry_engine_instance
         
-        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
+        # [CẬP NHẬT] Thêm bộ nhớ lưu trữ lịch sử và checkpoint
+        self.loss_history = []
+        self.best_model_state = None
+        self.last_model_state = None
         
+        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
         self.optimizer_lbfgs = optim.LBFGS(
             self.model.parameters(),
             lr=1.0,
@@ -21,7 +26,6 @@ class TrainingManager:
         )
 
     def compute_loss(self, points_tensor, alpha=1.0):
-        # Tính toán thuộc tính vật lý động (dynamic) để đồ thị đạo hàm được khởi tạo và hủy gọn gàng trong 1 epoch
         phys_props = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
         nu = phys_props["reluctivity"]
         J_z = phys_props["current_density_z"] * alpha
@@ -45,7 +49,8 @@ class TrainingManager:
     def train_adam(self, epochs, points_tensor, alpha):
         self.model.train()
         best_loss = float('inf')
-        best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
+        if self.best_model_state is None:
+            self.best_model_state = copy.deepcopy(self.model.state_dict())
         
         scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
         
@@ -55,25 +60,28 @@ class TrainingManager:
             loss = self.compute_loss(points_tensor, alpha)
             
             if torch.isnan(loss) or loss.item() > 10.0 * best_loss:
-                self.model.load_state_dict(best_model_state)
+                self.model.load_state_dict(self.best_model_state)
                 for param_group in self.optimizer_adam.param_groups:
                     param_group['lr'] *= 0.8
                 continue
                 
-            # ĐÃ XÓA retain_graph=True. Giải phóng VRAM hoàn toàn!
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer_adam.step()
             scheduler_adam.step()
             
             current_loss_value = loss.item()
+            self.loss_history.append(current_loss_value)
+            
             if current_loss_value < best_loss:
                 best_loss = current_loss_value
-                best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
+                self.best_model_state = copy.deepcopy(self.model.state_dict())
             
             if (epoch + 1) % 100 == 0:
                 current_lr = self.optimizer_adam.param_groups[0]['lr']
                 print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {current_lr:.3e}")
+                
+        self.last_model_state = copy.deepcopy(self.model.state_dict())
 
     def train_lbfgs(self, epochs, points_tensor, alpha):
         self.model.train()
@@ -85,4 +93,8 @@ class TrainingManager:
                 return loss
             
             loss_val = self.optimizer_lbfgs.step(closure)
-            print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
+            current_loss_value = loss_val.item()
+            self.loss_history.append(current_loss_value)
+            self.last_model_state = copy.deepcopy(self.model.state_dict())
+            
+            print(f"L-BFGS Epoch {epoch + 1}: Loss = {current_loss_value:.6e}")
