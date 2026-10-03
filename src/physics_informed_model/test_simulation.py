@@ -64,8 +64,8 @@ def main():
         number_of_uniform_points=2500,
         number_of_interface_points=800,
         distance_threshold=0.005,
-        stages=2,
-        epochs_per_stage=400
+        epochs_adam=800,
+        epochs_lbfgs=100
     )
     
     print("Đang tạo biểu đồ trực quan hóa kết quả trường điện từ...")

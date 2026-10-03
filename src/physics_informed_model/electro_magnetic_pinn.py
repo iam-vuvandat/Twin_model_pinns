@@ -1,7 +1,6 @@
 import torch
 from pinn_architecture import PINNArchitecture
 from training_manager import TrainingManager
-from curriculum_training_manager import CurriculumTrainingManager
 from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
 
 class ElectroMagneticPINN:
@@ -21,12 +20,8 @@ class ElectroMagneticPINN:
             model=self.pinn_architecture_instance,
             pde_evaluator=self.maxwell_pde_loss_instance
         )
-        
-        self.curriculum_training_manager_instance = CurriculumTrainingManager(
-            training_manager_instance=self.training_manager_instance
-        )
 
-    def execute_training_process(self, number_of_uniform_points, number_of_interface_points, distance_threshold, stages, epochs_per_stage):
+    def execute_training_process(self, number_of_uniform_points, number_of_interface_points, distance_threshold, epochs_adam, epochs_lbfgs):
         points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
             geometry_object=self.geometry_engine_instance,
             number_of_uniform_points=number_of_uniform_points,
@@ -36,13 +31,23 @@ class ElectroMagneticPINN:
         
         physical_properties_dictionary = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
         
-        self.curriculum_training_manager_instance.train_source_ramping(
-            stages=stages,
-            epochs_per_stage=epochs_per_stage,
+        print(f"--- Standard Adam Training ({epochs_adam} Epochs) ---")
+        self.training_manager_instance.train_adam(
+            epochs=epochs_adam,
             points_tensor=points_tensor,
             reluctivity_tensor=physical_properties_dictionary["reluctivity"],
             current_density_z_tensor=physical_properties_dictionary["current_density_z"],
             coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
+            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
+        )
+        
+        print(f"--- L-BFGS Refinement ({epochs_lbfgs} Epochs) ---")
+        self.training_manager_instance.train_lbfgs(
+            epochs=epochs_lbfgs, 
+            points_tensor=points_tensor, 
+            reluctivity_tensor=physical_properties_dictionary["reluctivity"], 
+            current_density_z_tensor=physical_properties_dictionary["current_density_z"], 
+            coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"], 
             coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
         )
 
