@@ -8,11 +8,11 @@ class PINNArchitecture(nn.Module):
         
         layers = []
         layers.append(nn.Linear(input_dim, hidden_neurons))
-        layers.append(nn.Tanh())
+        layers.append(nn.SiLU())
         
         for _ in range(hidden_layers - 1):
             layers.append(nn.Linear(hidden_neurons, hidden_neurons))
-            layers.append(nn.Tanh())
+            layers.append(nn.SiLU())
             
         layers.append(nn.Linear(hidden_neurons, output_dim))
         
