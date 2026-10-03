@@ -7,13 +7,13 @@ class TrainingManager:
         self.model = model
         self.pde_evaluator = pde_evaluator
         self.geometry_engine_instance = geometry_engine_instance
+        self.base_lr_adam = lr_adam
         
-        # [CẬP NHẬT] Thêm bộ nhớ lưu trữ lịch sử và checkpoint
         self.loss_history = []
         self.best_model_state = None
         self.last_model_state = None
         
-        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
+        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=self.base_lr_adam)
         self.optimizer_lbfgs = optim.LBFGS(
             self.model.parameters(),
             lr=1.0,
@@ -49,6 +49,11 @@ class TrainingManager:
     def train_adam(self, epochs, points_tensor, alpha):
         self.model.train()
         best_loss = float('inf')
+        
+        for param_group in self.optimizer_adam.param_groups:
+            param_group['initial_lr'] = self.base_lr_adam
+            param_group['lr'] = self.base_lr_adam
+            
         if self.best_model_state is None:
             self.best_model_state = copy.deepcopy(self.model.state_dict())
         
