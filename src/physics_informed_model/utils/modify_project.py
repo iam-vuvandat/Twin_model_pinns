@@ -1,69 +1,17 @@
 import os
 
-def restore_full_stable_project():
+def completely_remove_curriculum():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     project_root_directory = os.path.abspath(os.path.join(base_directory, '..'))
     
-    curriculum_path = os.path.join(project_root_directory, 'curriculum_training_manager.py')
     electro_magnetic_path = os.path.join(project_root_directory, 'electro_magnetic_pinn.py')
-    pinn_architecture_path = os.path.join(project_root_directory, 'pinn_architecture.py')
     test_simulation_path = os.path.join(project_root_directory, 'test_simulation.py')
-    training_manager_path = os.path.join(project_root_directory, 'training_manager.py')
-    geometry_path = os.path.join(project_root_directory, 'geometry_engine', 'geometry.py')
-    geometry_visualizer_path = os.path.join(project_root_directory, 'geometry_engine', 'geometry_visualizer.py')
-    global_eval_path = os.path.join(project_root_directory, 'geometry_engine', 'global_physical_properties_evaluation.py')
-    global_sdf_path = os.path.join(project_root_directory, 'geometry_engine', 'global_signed_distance_field.py')
-    polygon_sdf_path = os.path.join(project_root_directory, 'geometry_engine', 'segment', 'polygon_signed_distance_field.py')
-    segment_path = os.path.join(project_root_directory, 'geometry_engine', 'segment', 'segment.py')
-    collocation_path = os.path.join(project_root_directory, 'physics_domain', 'collocation_sampler.py')
-    maxwell_loss_path = os.path.join(project_root_directory, 'physics_domain', 'physical_equations', 'maxwell_pde_loss.py')
+    curriculum_path = os.path.join(project_root_directory, 'curriculum_training_manager.py')
 
-    # 1. curriculum_training_manager.py
-    with open(curriculum_path, 'w', encoding='utf-8') as f:
-        f.write("""import torch
-from training_manager import TrainingManager
-
-class CurriculumTrainingManager:
-    def __init__(self, training_manager_instance: TrainingManager):
-        self.training_manager_instance = training_manager_instance
-
-    def train_source_ramping(self, stages, epochs_per_stage, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        for stage in range(1, stages + 1):
-            alpha = stage / stages
-            
-            current_density_z_tensor_scaled = current_density_z_tensor * alpha
-            coercive_field_x_tensor_scaled = coercive_field_x_tensor * alpha
-            coercive_field_y_tensor_scaled = coercive_field_y_tensor * alpha
-            
-            print(f"--- Curriculum Stage {stage}/{stages} (Alpha = {alpha:.2f}) ---")
-            
-            self.training_manager_instance.train_adam(
-                epochs=epochs_per_stage,
-                points_tensor=points_tensor,
-                reluctivity_tensor=reluctivity_tensor,
-                current_density_z_tensor=current_density_z_tensor_scaled,
-                coercive_field_x_tensor=coercive_field_x_tensor_scaled,
-                coercive_field_y_tensor=coercive_field_y_tensor_scaled
-            )
-            
-        print("--- Curriculum L-BFGS Refinement (Alpha = 1.00) ---")
-        
-        self.training_manager_instance.train_lbfgs(
-            epochs=100, 
-            points_tensor=points_tensor, 
-            reluctivity_tensor=reluctivity_tensor, 
-            current_density_z_tensor=current_density_z_tensor, 
-            coercive_field_x_tensor=coercive_field_x_tensor, 
-            coercive_field_y_tensor=coercive_field_y_tensor
-        )
-""")
-
-    # 2. electro_magnetic_pinn.py
-    with open(electro_magnetic_path, 'w', encoding='utf-8') as f:
-        f.write("""import torch
+    # Cập nhật ElectroMagneticPINN: Cắt bỏ hoàn toàn Curriculum, gọi thẳng TrainingManager
+    electro_magnetic_code = """import torch
 from pinn_architecture import PINNArchitecture
 from training_manager import TrainingManager
-from curriculum_training_manager import CurriculumTrainingManager
 from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
 
 class ElectroMagneticPINN:
@@ -83,12 +31,8 @@ class ElectroMagneticPINN:
             model=self.pinn_architecture_instance,
             pde_evaluator=self.maxwell_pde_loss_instance
         )
-        
-        self.curriculum_training_manager_instance = CurriculumTrainingManager(
-            training_manager_instance=self.training_manager_instance
-        )
 
-    def execute_training_process(self, number_of_uniform_points, number_of_interface_points, distance_threshold, stages, epochs_per_stage):
+    def execute_training_process(self, number_of_uniform_points, number_of_interface_points, distance_threshold, epochs_adam, epochs_lbfgs):
         points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
             geometry_object=self.geometry_engine_instance,
             number_of_uniform_points=number_of_uniform_points,
@@ -98,13 +42,23 @@ class ElectroMagneticPINN:
         
         physical_properties_dictionary = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
         
-        self.curriculum_training_manager_instance.train_source_ramping(
-            stages=stages,
-            epochs_per_stage=epochs_per_stage,
+        print(f"--- Standard Adam Training ({epochs_adam} Epochs) ---")
+        self.training_manager_instance.train_adam(
+            epochs=epochs_adam,
             points_tensor=points_tensor,
             reluctivity_tensor=physical_properties_dictionary["reluctivity"],
             current_density_z_tensor=physical_properties_dictionary["current_density_z"],
             coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
+            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
+        )
+        
+        print(f"--- L-BFGS Refinement ({epochs_lbfgs} Epochs) ---")
+        self.training_manager_instance.train_lbfgs(
+            epochs=epochs_lbfgs, 
+            points_tensor=points_tensor, 
+            reluctivity_tensor=physical_properties_dictionary["reluctivity"], 
+            current_density_z_tensor=physical_properties_dictionary["current_density_z"], 
+            coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"], 
             coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
         )
 
@@ -133,53 +87,10 @@ class ElectroMagneticPINN:
         B_y = -grad_A[:, 0:1]
         
         return A_z_phys.detach(), B_x.detach(), B_y.detach()
-""")
+"""
 
-    # 3. pinn_architecture.py
-    with open(pinn_architecture_path, 'w', encoding='utf-8') as f:
-        f.write("""import torch
-import torch.nn as nn
-
-class PINNArchitecture(nn.Module):
-    def __init__(self, input_dim=2, hidden_layers=4, hidden_neurons=50, output_dim=1, domain_scale=0.05):
-        super().__init__()
-        self.domain_scale = domain_scale
-        
-        layers = []
-        layers.append(nn.Linear(input_dim, hidden_neurons))
-        layers.append(nn.SiLU())
-        
-        for _ in range(hidden_layers - 1):
-            layers.append(nn.Linear(hidden_neurons, hidden_neurons))
-            layers.append(nn.SiLU())
-            
-        layers.append(nn.Linear(hidden_neurons, output_dim))
-        
-        self.network = nn.Sequential(*layers)
-        self._initialize_weights()
-
-    def _initialize_weights(self):
-        for module in self.network:
-            if isinstance(module, nn.Linear):
-                nn.init.xavier_normal_(module.weight)
-                nn.init.zeros_(module.bias)
-
-    def boundary_factor(self, xy):
-        x_factor = 1.0 - (xy[:, 0:1] / self.domain_scale)**2
-        y_factor = 1.0 - (xy[:, 1:2] / self.domain_scale)**2
-        return x_factor * y_factor
-
-    def forward(self, xy):
-        xy_normalized = xy / self.domain_scale
-        raw_output = self.network(xy_normalized)
-        
-        A_z_star = raw_output * self.boundary_factor(xy)
-        return A_z_star
-""")
-
-    # 4. test_simulation.py
-    with open(test_simulation_path, 'w', encoding='utf-8') as f:
-        f.write("""import os
+    # Cập nhật tham số truyền vào hàm execute_training_process
+    test_simulation_code = """import os
 import sys
 
 current_directory = os.path.dirname(os.path.abspath(__file__))
@@ -245,8 +156,8 @@ def main():
         number_of_uniform_points=2500,
         number_of_interface_points=800,
         distance_threshold=0.005,
-        stages=2,
-        epochs_per_stage=400
+        epochs_adam=800,
+        epochs_lbfgs=100
     )
     
     print("Đang tạo biểu đồ trực quan hóa kết quả trường điện từ...")
@@ -299,499 +210,19 @@ def main():
 
 if __name__ == '__main__':
     main()
-""")
+"""
 
-    # 5. training_manager.py
-    with open(training_manager_path, 'w', encoding='utf-8') as f:
-        f.write("""import torch
-import torch.optim as optim
-
-class TrainingManager:
-    def __init__(self, model, pde_evaluator, lr_adam=1e-3):
-        self.model = model
-        self.pde_evaluator = pde_evaluator
+    with open(electro_magnetic_path, 'w', encoding='utf-8') as f:
+        f.write(electro_magnetic_code)
         
-        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
+    with open(test_simulation_path, 'w', encoding='utf-8') as f:
+        f.write(test_simulation_code)
         
-        self.optimizer_lbfgs = optim.LBFGS(
-            self.model.parameters(),
-            lr=1.0,
-            max_iter=50,
-            max_eval=50,
-            tolerance_grad=1e-7,
-            tolerance_change=1e-9,
-            history_size=100,
-            line_search_fn="strong_wolfe"
-        )
-
-    def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        A_z_star = self.model(points_tensor)
+    # Xóa vĩnh viễn file curriculum
+    if os.path.exists(curriculum_path):
+        os.remove(curriculum_path)
         
-        residual_star = self.pde_evaluator.compute_residual(
-            xy=points_tensor,
-            A_z_star=A_z_star,
-            nu=reluctivity_tensor,
-            J_z=current_density_z_tensor,
-            H_cx=coercive_field_x_tensor,
-            H_cy=coercive_field_y_tensor
-        )
-        
-        loss_pde = torch.mean(residual_star**2)
-        return loss_pde
-
-    def train_adam(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        self.model.train()
-        best_loss = float('inf')
-        best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
-        
-        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
-        
-        for epoch in range(epochs):
-            self.optimizer_adam.zero_grad()
-            
-            loss = self.compute_loss(
-                points_tensor, reluctivity_tensor, 
-                current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
-            )
-            
-            if torch.isnan(loss) or loss.item() > 1.5 * best_loss:
-                self.model.load_state_dict(best_model_state)
-                for param_group in self.optimizer_adam.param_groups:
-                    param_group['lr'] *= 0.8
-                continue
-                
-            loss.backward(retain_graph=True)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-            self.optimizer_adam.step()
-            scheduler_adam.step()
-            
-            current_loss_value = loss.item()
-            if current_loss_value < best_loss:
-                best_loss = current_loss_value
-                best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
-            
-            if (epoch + 1) % 100 == 0:
-                current_lr = self.optimizer_adam.param_groups[0]['lr']
-                print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {current_lr:.3e}")
-
-    def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        self.model.train()
-        for epoch in range(epochs):
-            def closure():
-                self.optimizer_lbfgs.zero_grad()
-                loss = self.compute_loss(
-                    points_tensor, reluctivity_tensor, 
-                    current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
-                )
-                loss.backward(retain_graph=True)
-                return loss
-            
-            loss_val = self.optimizer_lbfgs.step(closure)
-            print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
-""")
-
-    # 6. geometry.py
-    with open(geometry_path, 'w', encoding='utf-8') as f:
-        f.write("""import torch
-from geometry_engine.segment.segment import Segment
-from geometry_engine.global_signed_distance_field import compute_global_signed_distance_field
-from geometry_engine.global_physical_properties_evaluation import evaluate_global_physical_properties
-from geometry_engine.geometry_visualizer import plot_geometry_problem
-
-class Geometry:
-    def __init__(self, steepness=300.0):
-        self.segments_list = []
-        self.vacuum_reluctivity = 795774.715459
-        self.steepness = steepness
-
-    def add_segment(self, segment_object):
-        self.segments_list.append(segment_object)
-        return self
-
-    def compute_global_signed_distance_field(self, points_tensor):
-        return compute_global_signed_distance_field(self.segments_list, points_tensor)
-
-    def evaluate_global_physical_properties(self, points_tensor):
-        return evaluate_global_physical_properties(self.segments_list, points_tensor, self.vacuum_reluctivity, self.steepness)
-
-    def plot_problem_definition(self, x_boundaries_tuple, y_boundaries_tuple, resolution=100):
-        plot_geometry_problem(self, x_boundaries_tuple, y_boundaries_tuple, resolution)
-""")
-
-    # 7. geometry_visualizer.py
-    with open(geometry_visualizer_path, 'w', encoding='utf-8') as f:
-        f.write("""import torch
-import numpy as np
-import matplotlib.pyplot as plt
-
-def plot_geometry_problem(geometry_instance, x_boundaries_tuple, y_boundaries_tuple, resolution=100):
-    x_coords = np.linspace(x_boundaries_tuple[0], x_boundaries_tuple[1], resolution)
-    y_coords = np.linspace(y_boundaries_tuple[0], y_boundaries_tuple[1], resolution)
-    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
-    
-    xy_points_tensor = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
-    
-    sdf_values_tensor = geometry_instance.compute_global_signed_distance_field(xy_points_tensor)
-    physical_properties_dictionary = geometry_instance.evaluate_global_physical_properties(xy_points_tensor)
-    
-    sdf_grid = sdf_values_tensor.numpy().reshape(resolution, resolution)
-    
-    reluctivity_tensor = physical_properties_dictionary["reluctivity"]
-    mu_r_tensor = geometry_instance.vacuum_reluctivity / reluctivity_tensor
-    mu_r_grid = mu_r_tensor.numpy().reshape(resolution, resolution)
-    
-    hx_tensor = physical_properties_dictionary["coercive_field_x"]
-    hy_tensor = physical_properties_dictionary["coercive_field_y"]
-    hc_magnitude_tensor = torch.sqrt(hx_tensor**2 + hy_tensor**2)
-    hc_grid = hc_magnitude_tensor.numpy().reshape(resolution, resolution)
-    
-    jz_tensor = physical_properties_dictionary["current_density_z"]
-    jz_grid = jz_tensor.numpy().reshape(resolution, resolution)
-    
-    fig, axs = plt.subplots(2, 2, figsize=(12, 10))
-    
-    contour_sdf = axs[0, 0].contourf(X_grid, Y_grid, sdf_grid, levels=50, cmap="coolwarm")
-    axs[0, 0].contour(X_grid, Y_grid, sdf_grid, levels=[0.0], colors="black", linewidths=1.5)
-    fig.colorbar(contour_sdf, ax=axs[0, 0])
-    axs[0, 0].set_title("Signed Distance Field (SDF)")
-    axs[0, 0].set_xlabel("x (m)")
-    axs[0, 0].set_ylabel("y (m)")
-    axs[0, 0].set_aspect('equal')
-    
-    contour_mur = axs[0, 1].contourf(X_grid, Y_grid, mu_r_grid, levels=50, cmap="viridis")
-    fig.colorbar(contour_mur, ax=axs[0, 1])
-    axs[0, 1].set_title("Relative Permeability (mu_r)")
-    axs[0, 1].set_xlabel("x (m)")
-    axs[0, 1].set_ylabel("y (m)")
-    axs[0, 1].set_aspect('equal')
-    
-    contour_hc = axs[1, 0].contourf(X_grid, Y_grid, hc_grid, levels=50, cmap="plasma")
-    fig.colorbar(contour_hc, ax=axs[1, 0])
-    axs[1, 0].set_title("Magnetization Magnitude (Hc)")
-    axs[1, 0].set_xlabel("x (m)")
-    axs[1, 0].set_ylabel("y (m)")
-    axs[1, 0].set_aspect('equal')
-    
-    contour_jz = axs[1, 1].contourf(X_grid, Y_grid, jz_grid, levels=50, cmap="inferno")
-    fig.colorbar(contour_jz, ax=axs[1, 1])
-    axs[1, 1].set_title("Current Density (Jz)")
-    axs[1, 1].set_xlabel("x (m)")
-    axs[1, 1].set_ylabel("y (m)")
-    axs[1, 1].set_aspect('equal')
-    
-    plt.tight_layout()
-    plt.show()
-""")
-
-    # 8. global_physical_properties_evaluation.py
-    with open(global_eval_path, 'w', encoding='utf-8') as f:
-        f.write("""import torch
-
-def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_reluctivity, steepness=5000.0):
-    number_of_points = points_tensor.shape[0]
-    computation_device = points_tensor.device
-    
-    global_reluctivity_tensor = torch.full((number_of_points, 1), vacuum_reluctivity, dtype=torch.float32, device=computation_device)
-    global_coercive_field_x_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-    global_coercive_field_y_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-    global_current_density_z_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-    global_material_classification_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-
-    material_index_counter = 1.0
-
-    for segment_object in segments_list:
-        signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
-        
-        mask_smooth = torch.sigmoid(-steepness * signed_distance_field).view(-1, 1)
-        
-        seg_reluctivity = segment_object.evaluate_reluctivity(points_tensor)
-        hx_tensor, hy_tensor = segment_object.evaluate_magnetization_vector(points_tensor)
-        seg_jz = segment_object.evaluate_current_density(points_tensor)
-        
-        global_reluctivity_tensor = global_reluctivity_tensor + mask_smooth * (seg_reluctivity - vacuum_reluctivity)
-        global_coercive_field_x_tensor = global_coercive_field_x_tensor + mask_smooth * hx_tensor
-        global_coercive_field_y_tensor = global_coercive_field_y_tensor + mask_smooth * hy_tensor
-        global_current_density_z_tensor = global_current_density_z_tensor + mask_smooth * seg_jz
-        
-        global_material_classification_tensor = global_material_classification_tensor + mask_smooth * material_index_counter
-        
-        material_index_counter += 1.0
-
-    return {
-        "reluctivity": global_reluctivity_tensor,
-        "coercive_field_x": global_coercive_field_x_tensor,
-        "coercive_field_y": global_coercive_field_y_tensor,
-        "current_density_z": global_current_density_z_tensor,
-        "material_classification": global_material_classification_tensor
-    }
-""")
-
-    # 9. global_signed_distance_field.py
-    with open(global_sdf_path, 'w', encoding='utf-8') as f:
-        f.write("""import torch
-
-def compute_global_signed_distance_field(segments_list, points_tensor):
-    if not segments_list:
-        return torch.ones((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-        
-    global_signed_distance_field = segments_list[0].compute_signed_distance_field(points_tensor)
-    
-    for segment_object in segments_list[1:]:
-        current_signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
-        global_signed_distance_field = torch.minimum(global_signed_distance_field, current_signed_distance_field)
-        
-    return global_signed_distance_field
-""")
-
-    # 10. polygon_signed_distance_field.py
-    with open(polygon_sdf_path, 'w', encoding='utf-8') as f:
-        f.write("""import torch
-
-def compute_polygon_signed_distance_field(vertices_tensor, points_tensor):
-    if vertices_tensor is None:
-        raise ValueError("Segment vertices must be set before computing signed distance field.")
-        
-    computation_device = points_tensor.device
-    computation_dtype = points_tensor.dtype
-
-    vertices_on_device = vertices_tensor.to(
-        device=computation_device,
-        dtype=computation_dtype,
-    )
-    
-    start_points = vertices_on_device
-    end_points = torch.roll(vertices_on_device, shifts=-1, dims=0)
-    
-    edge_vectors = end_points - start_points
-    point_to_start_vectors = points_tensor.unsqueeze(1) - start_points.unsqueeze(0)
-    
-    dot_product_point_to_start_and_edge = torch.sum(point_to_start_vectors * edge_vectors.unsqueeze(0), dim=2)
-    dot_product_edge_and_edge = torch.sum(edge_vectors * edge_vectors, dim=1).unsqueeze(0)
-    
-    dot_product_edge_and_edge = torch.clamp(
-        dot_product_edge_and_edge,
-        min=torch.finfo(computation_dtype).eps,
-    )
-    
-    projection_parameter = dot_product_point_to_start_and_edge / dot_product_edge_and_edge
-    clamped_projection_parameter = torch.clamp(projection_parameter, min=0.0, max=1.0)
-    
-    closest_points = start_points.unsqueeze(0) + clamped_projection_parameter.unsqueeze(-1) * edge_vectors.unsqueeze(0)
-    
-    diff_vectors = points_tensor.unsqueeze(1) - closest_points
-    distances_to_edges = torch.sqrt(torch.sum(diff_vectors * diff_vectors, dim=2) + 1e-12)
-    
-    minimum_distances, _ = torch.min(distances_to_edges, dim=1)
-    
-    points_x_coordinates = points_tensor[:, 0].unsqueeze(1)
-    points_y_coordinates = points_tensor[:, 1].unsqueeze(1)
-    start_points_x_coordinates = start_points[:, 0].unsqueeze(0)
-    start_points_y_coordinates = start_points[:, 1].unsqueeze(0)
-    end_points_x_coordinates = end_points[:, 0].unsqueeze(0)
-    end_points_y_coordinates = end_points[:, 1].unsqueeze(0)
-    
-    condition_y_between_start_and_end = (start_points_y_coordinates <= points_y_coordinates) & (points_y_coordinates < end_points_y_coordinates)
-    condition_y_between_end_and_start = (end_points_y_coordinates <= points_y_coordinates) & (points_y_coordinates < start_points_y_coordinates)
-    valid_y_intersection = condition_y_between_start_and_end | condition_y_between_end_and_start
-    
-    y_difference = end_points_y_coordinates - start_points_y_coordinates
-    
-    dy_safe = torch.where(
-        torch.abs(y_difference) < torch.finfo(computation_dtype).eps,
-        torch.full_like(y_difference, 1e-7),
-        y_difference,
-    )
-    
-    intersection_x_coordinates = start_points_x_coordinates + (points_y_coordinates - start_points_y_coordinates) * (end_points_x_coordinates - start_points_x_coordinates) / dy_safe
-    ray_crossings = valid_y_intersection & (points_x_coordinates < intersection_x_coordinates)
-    
-    is_point_inside = ray_crossings.sum(dim=1) % 2 == 1
-    distance_sign = torch.where(
-        is_point_inside,
-        -torch.ones_like(minimum_distances),
-        torch.ones_like(minimum_distances),
-    )
-    
-    return distance_sign * minimum_distances
-""")
-
-    # 11. segment.py
-    with open(segment_path, 'w', encoding='utf-8') as f:
-        f.write("""import torch
-from geometry_engine.segment.polygon_signed_distance_field import compute_polygon_signed_distance_field
-
-class Segment:
-    def __init__(self, vertices_list=None):
-        self.material_name = "air"
-        self.vacuum_reluctivity = 795774.715459
-        
-        self.relative_permeability = 1.0
-        self.reluctivity_function = None
-        
-        self.coercive_field_x = 0.0
-        self.coercive_field_y = 0.0
-        self.magnetization_vector_function = None
-        
-        self.current_density_z_axis = 0.0
-        self.current_density_function = None
-        
-        self.vertices_tensor = None
-        if vertices_list is not None:
-            self.set_vertices(vertices_list)
-
-    def set_vertices(self, vertices_list):
-        self.vertices_tensor = torch.tensor(vertices_list, dtype=torch.float32)
-        return self
-
-    def set_material_properties(
-        self, 
-        name="default", 
-        relative_permeability=1.0, 
-        reluctivity_function=None,
-        coercive_field_x=0.0,
-        coercive_field_y=0.0,
-        magnetization_vector_function=None, 
-        current_density_z_axis=0.0,
-        current_density_function=None
-    ):
-        self.material_name = name
-        self.relative_permeability = relative_permeability
-        self.reluctivity_function = reluctivity_function
-        self.coercive_field_x = coercive_field_x
-        self.coercive_field_y = coercive_field_y
-        self.magnetization_vector_function = magnetization_vector_function
-        self.current_density_z_axis = current_density_z_axis
-        self.current_density_function = current_density_function
-        return self
-
-    def compute_signed_distance_field(self, points_tensor):
-        return compute_polygon_signed_distance_field(self.vertices_tensor, points_tensor)
-
-    def evaluate_reluctivity(self, points_tensor):
-        if self.reluctivity_function is not None:
-            return self.reluctivity_function(points_tensor)
-        constant_reluctivity = self.vacuum_reluctivity / self.relative_permeability
-        return torch.full((points_tensor.shape[0], 1), constant_reluctivity, dtype=torch.float32, device=points_tensor.device)
-
-    def evaluate_magnetization_vector(self, points_tensor):
-        if self.magnetization_vector_function is not None:
-            return self.magnetization_vector_function(points_tensor)
-        hx_tensor = torch.full((points_tensor.shape[0], 1), self.coercive_field_x, dtype=torch.float32, device=points_tensor.device)
-        hy_tensor = torch.full((points_tensor.shape[0], 1), self.coercive_field_y, dtype=torch.float32, device=points_tensor.device)
-        return hx_tensor, hy_tensor
-
-    def evaluate_current_density(self, points_tensor):
-        if self.current_density_function is not None:
-            return self.current_density_function(points_tensor)
-        return torch.full((points_tensor.shape[0], 1), self.current_density_z_axis, dtype=torch.float32, device=points_tensor.device)
-""")
-
-    # 12. collocation_sampler.py
-    with open(collocation_path, 'w', encoding='utf-8') as f:
-        f.write("""import torch
-
-class CollocationSampler:
-    def __init__(self, x_boundaries_tuple, y_boundaries_tuple):
-        self.x_minimum = x_boundaries_tuple[0]
-        self.x_maximum = x_boundaries_tuple[1]
-        self.y_minimum = y_boundaries_tuple[0]
-        self.y_maximum = y_boundaries_tuple[1]
-
-    def generate_uniform_points_tensor(self, number_of_points):
-        points_tensor = torch.rand((number_of_points, 2), dtype=torch.float32)
-        points_tensor[:, 0] = points_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
-        points_tensor[:, 1] = points_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
-        points_tensor.requires_grad_(True)
-        return points_tensor
-
-    def generate_interface_points_tensor(self, geometry_object, number_of_points, distance_threshold):
-        collected_points = []
-        collected_count = 0
-        pool_size_value = number_of_points * 20
-        
-        while collected_count < number_of_points:
-            points_pool_tensor = torch.rand((pool_size_value, 2), dtype=torch.float32)
-            points_pool_tensor[:, 0] = points_pool_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
-            points_pool_tensor[:, 1] = points_pool_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
-            
-            signed_distance_field_tensor = geometry_object.compute_global_signed_distance_field(points_pool_tensor)
-            mask_tensor = torch.abs(signed_distance_field_tensor) < distance_threshold
-            mask_1d = mask_tensor.squeeze()
-            
-            if mask_1d.any():
-                valid_points = points_pool_tensor[mask_1d]
-                collected_points.append(valid_points)
-                collected_count += valid_points.shape[0]
-                
-        interface_points_tensor = torch.cat(collected_points, dim=0)[:number_of_points, :]
-        interface_points_tensor = interface_points_tensor.detach().clone()
-        interface_points_tensor.requires_grad_(True)
-        return interface_points_tensor
-
-    def generate_combined_points_tensor(self, geometry_object, number_of_uniform_points, number_of_interface_points, distance_threshold):
-        uniform_points_tensor = self.generate_uniform_points_tensor(number_of_uniform_points)
-        interface_points_tensor = self.generate_interface_points_tensor(geometry_object, number_of_interface_points, distance_threshold)
-        
-        combined_points_tensor = torch.cat([uniform_points_tensor, interface_points_tensor], dim=0)
-        
-        combined_points_tensor = combined_points_tensor.detach().clone()
-        combined_points_tensor.requires_grad_(True)
-        return combined_points_tensor
-""")
-
-    # 13. maxwell_pde_loss.py
-    with open(maxwell_loss_path, 'w', encoding='utf-8') as f:
-        f.write("""import torch
-
-class MaxwellPDELoss:
-    def __init__(self, L0=0.05, H0=800000.0, nu0=795774.715459):
-        self.L0 = L0
-        self.H0 = H0
-        self.nu0 = nu0
-
-    def compute_residual(self, xy, A_z_star, nu, J_z, H_cx, H_cy):
-        nu_star = nu / self.nu0
-        H_cx_star = H_cx / self.H0
-        H_cy_star = H_cy / self.H0
-        J_z_star = J_z / (self.H0 / self.L0)
-        
-        grad_A_star = torch.autograd.grad(
-            outputs=A_z_star,
-            inputs=xy,
-            grad_outputs=torch.ones_like(A_z_star),
-            create_graph=True,
-            retain_graph=True
-        )[0]
-        
-        dAz_star_dx_star = grad_A_star[:, 0:1] * self.L0
-        dAz_star_dy_star = grad_A_star[:, 1:2] * self.L0
-        
-        H_x_star = nu_star * dAz_star_dy_star - H_cx_star
-        H_y_star = -nu_star * dAz_star_dx_star - H_cy_star
-        
-        grad_Hx_star = torch.autograd.grad(
-            outputs=H_x_star,
-            inputs=xy,
-            grad_outputs=torch.ones_like(H_x_star),
-            create_graph=True,
-            retain_graph=True
-        )[0]
-        dHx_star_dy_star = grad_Hx_star[:, 1:2] * self.L0
-        
-        grad_Hy_star = torch.autograd.grad(
-            outputs=H_y_star,
-            inputs=xy,
-            grad_outputs=torch.ones_like(H_y_star),
-            create_graph=True,
-            retain_graph=True
-        )[0]
-        dHy_star_dx_star = grad_Hy_star[:, 0:1] * self.L0
-        
-        residual_star = dHy_star_dx_star - dHx_star_dy_star - J_z_star
-        return residual_star
-""")
-
-    print("Đã khôi phục thành công toàn bộ mã nguồn về phiên bản ổn định (với Curriculum Training, SiLU và steepness 300.0).")
+    print("Đã dọn dẹp hoàn toàn Curriculum Training. Mô hình sẽ chạy với 100% từ hóa ngay từ đầu.")
 
 if __name__ == '__main__':
-    restore_full_stable_project()
+    completely_remove_curriculum()
