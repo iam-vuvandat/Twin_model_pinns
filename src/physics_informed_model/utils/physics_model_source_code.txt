@@ -2,7 +2,6 @@
 DIRECTORY STRUCTURE
 ========================================
 physics_informed_model/
-    curriculum_training_manager.py
     electro_magnetic_pinn.py
     extract.py
     pinn_architecture.py
@@ -29,53 +28,11 @@ physics_informed_model/
 SOURCE CODE
 ========================================
 
---- FILE: curriculum_training_manager.py ---
-
-import torch
-from training_manager import TrainingManager
-
-class CurriculumTrainingManager:
-    def __init__(self, training_manager_instance: TrainingManager):
-        self.training_manager_instance = training_manager_instance
-
-    def train_source_ramping(self, stages, epochs_per_stage, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        for stage in range(1, stages + 1):
-            alpha = stage / stages
-            
-            current_density_z_tensor_scaled = current_density_z_tensor * alpha
-            coercive_field_x_tensor_scaled = coercive_field_x_tensor * alpha
-            coercive_field_y_tensor_scaled = coercive_field_y_tensor * alpha
-            
-            print(f"--- Curriculum Stage {stage}/{stages} (Alpha = {alpha:.2f}) ---")
-            
-            self.training_manager_instance.train_adam(
-                epochs=epochs_per_stage,
-                points_tensor=points_tensor,
-                reluctivity_tensor=reluctivity_tensor,
-                current_density_z_tensor=current_density_z_tensor_scaled,
-                coercive_field_x_tensor=coercive_field_x_tensor_scaled,
-                coercive_field_y_tensor=coercive_field_y_tensor_scaled
-            )
-            
-        print("--- Curriculum L-BFGS Refinement (Alpha = 1.00) ---")
-        
-        self.training_manager_instance.train_lbfgs(
-            epochs=100, 
-            points_tensor=points_tensor, 
-            reluctivity_tensor=reluctivity_tensor, 
-            current_density_z_tensor=current_density_z_tensor, 
-            coercive_field_x_tensor=coercive_field_x_tensor, 
-            coercive_field_y_tensor=coercive_field_y_tensor
-        )
-
-========================================
-
 --- FILE: electro_magnetic_pinn.py ---
 
 import torch
 from pinn_architecture import PINNArchitecture
 from training_manager import TrainingManager
-from curriculum_training_manager import CurriculumTrainingManager
 from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
 
 class ElectroMagneticPINN:
@@ -95,12 +52,8 @@ class ElectroMagneticPINN:
             model=self.pinn_architecture_instance,
             pde_evaluator=self.maxwell_pde_loss_instance
         )
-        
-        self.curriculum_training_manager_instance = CurriculumTrainingManager(
-            training_manager_instance=self.training_manager_instance
-        )
 
-    def execute_training_process(self, number_of_uniform_points, number_of_interface_points, distance_threshold, stages, epochs_per_stage):
+    def execute_training_process(self, number_of_uniform_points, number_of_interface_points, distance_threshold, epochs_adam, epochs_lbfgs):
         points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
             geometry_object=self.geometry_engine_instance,
             number_of_uniform_points=number_of_uniform_points,
@@ -110,13 +63,23 @@ class ElectroMagneticPINN:
         
         physical_properties_dictionary = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
         
-        self.curriculum_training_manager_instance.train_source_ramping(
-            stages=stages,
-            epochs_per_stage=epochs_per_stage,
+        print(f"--- Standard Adam Training ({epochs_adam} Epochs) ---")
+        self.training_manager_instance.train_adam(
+            epochs=epochs_adam,
             points_tensor=points_tensor,
             reluctivity_tensor=physical_properties_dictionary["reluctivity"],
             current_density_z_tensor=physical_properties_dictionary["current_density_z"],
             coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
+            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
+        )
+        
+        print(f"--- L-BFGS Refinement ({epochs_lbfgs} Epochs) ---")
+        self.training_manager_instance.train_lbfgs(
+            epochs=epochs_lbfgs, 
+            points_tensor=points_tensor, 
+            reluctivity_tensor=physical_properties_dictionary["reluctivity"], 
+            current_density_z_tensor=physical_properties_dictionary["current_density_z"], 
+            coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"], 
             coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
         )
 
@@ -224,11 +187,11 @@ class PINNArchitecture(nn.Module):
         
         layers = []
         layers.append(nn.Linear(input_dim, hidden_neurons))
-        layers.append(nn.Tanh())
+        layers.append(nn.SiLU())
         
         for _ in range(hidden_layers - 1):
             layers.append(nn.Linear(hidden_neurons, hidden_neurons))
-            layers.append(nn.Tanh())
+            layers.append(nn.SiLU())
             
         layers.append(nn.Linear(hidden_neurons, output_dim))
         
@@ -323,8 +286,8 @@ def main():
         number_of_uniform_points=2500,
         number_of_interface_points=800,
         distance_threshold=0.005,
-        stages=2,
-        epochs_per_stage=400
+        epochs_adam=800,
+        epochs_lbfgs=100
     )
     
     print("Đang tạo biểu đồ trực quan hóa kết quả trường điện từ...")
@@ -342,37 +305,64 @@ def main():
     B_y_grid = B_y_pred.numpy().reshape(resolution, resolution)
     B_mag_grid = np.sqrt(B_x_grid**2 + B_y_grid**2)
     
-    fig, axs = plt.subplots(2, 2, figsize=(12, 10))
+    # --- Figure 1: Các biểu đồ cường độ và thành phần (Contours) ---
+    fig1, axs = plt.subplots(2, 2, figsize=(12, 10))
     
     contour_az = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
-    fig.colorbar(contour_az, ax=axs[0, 0], label="A_z (Wb/m)")
+    fig1.colorbar(contour_az, ax=axs[0, 0], label="A_z (Wb/m)")
     axs[0, 0].set_title("Magnetic Vector Potential ($A_z$)")
     axs[0, 0].set_xlabel("x (m)")
     axs[0, 0].set_ylabel("y (m)")
     axs[0, 0].set_aspect('equal')
     
     contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
-    fig.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
+    fig1.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
     axs[0, 1].set_title("Magnetic Flux Density Magnitude ($|B|$)")
     axs[0, 1].set_xlabel("x (m)")
     axs[0, 1].set_ylabel("y (m)")
     axs[0, 1].set_aspect('equal')
     
     contour_bx = axs[1, 0].contourf(X_grid, Y_grid, B_x_grid, levels=60, cmap="coolwarm")
-    fig.colorbar(contour_bx, ax=axs[1, 0], label="B_x (T)")
+    fig1.colorbar(contour_bx, ax=axs[1, 0], label="B_x (T)")
     axs[1, 0].set_title("Magnetic Field Component ($B_x$)")
     axs[1, 0].set_xlabel("x (m)")
     axs[1, 0].set_ylabel("y (m)")
     axs[1, 0].set_aspect('equal')
     
     contour_by = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=60, cmap="coolwarm")
-    fig.colorbar(contour_by, ax=axs[1, 1], label="B_y (T)")
+    fig1.colorbar(contour_by, ax=axs[1, 1], label="B_y (T)")
     axs[1, 1].set_title("Magnetic Field Component ($B_y$)")
     axs[1, 1].set_xlabel("x (m)")
     axs[1, 1].set_ylabel("y (m)")
     axs[1, 1].set_aspect('equal')
     
-    plt.tight_layout()
+    fig1.tight_layout()
+    
+    # --- Figure 2: Biểu đồ Vector Mật độ từ thông (Quiver plot) ---
+    fig2, ax2 = plt.subplots(figsize=(8, 7))
+    
+    # Vẽ nền làm mờ hiển thị cường độ |B|
+    contour_b_bg = ax2.contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow", alpha=0.4)
+    fig2.colorbar(contour_b_bg, ax=ax2, label="|B| (T)")
+    
+    # Lấy mẫu thưa hơn (stride = 4) để vẽ vector tránh bị rối do lưới 120x120 quá dày
+    step = 4
+    X_sub = X_grid[::step, ::step]
+    Y_sub = Y_grid[::step, ::step]
+    Bx_sub = B_x_grid[::step, ::step]
+    By_sub = B_y_grid[::step, ::step]
+    
+    # Vẽ đồ thị vector (Quiver plot)
+    ax2.quiver(X_sub, Y_sub, Bx_sub, By_sub, color='black', pivot='mid')
+    
+    ax2.set_title("Magnetic Flux Density Vectors (B)")
+    ax2.set_xlabel("x (m)")
+    ax2.set_ylabel("y (m)")
+    ax2.set_aspect('equal')
+    
+    fig2.tight_layout()
+    
+    # Hiển thị tất cả các biểu đồ
     plt.show()
 
 
@@ -477,7 +467,7 @@ from geometry_engine.global_physical_properties_evaluation import evaluate_globa
 from geometry_engine.geometry_visualizer import plot_geometry_problem
 
 class Geometry:
-    def __init__(self, steepness=2000.0):
+    def __init__(self, steepness=300.0):
         self.segments_list = []
         self.vacuum_reluctivity = 795774.715459
         self.steepness = steepness
@@ -886,186 +876,13 @@ class MaxwellPDELoss:
 
 import os
 
-def restore_stable_project():
+def change_to_quiver_plot():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     project_root_directory = os.path.abspath(os.path.join(base_directory, '..'))
     
-    curriculum_path = os.path.join(project_root_directory, 'curriculum_training_manager.py')
-    electro_magnetic_path = os.path.join(project_root_directory, 'electro_magnetic_pinn.py')
-    pinn_architecture_path = os.path.join(project_root_directory, 'pinn_architecture.py')
     test_simulation_path = os.path.join(project_root_directory, 'test_simulation.py')
-    training_manager_path = os.path.join(project_root_directory, 'training_manager.py')
-    geometry_path = os.path.join(project_root_directory, 'geometry_engine', 'geometry.py')
-    geometry_visualizer_path = os.path.join(project_root_directory, 'geometry_engine', 'geometry_visualizer.py')
-    global_eval_path = os.path.join(project_root_directory, 'geometry_engine', 'global_physical_properties_evaluation.py')
-    global_sdf_path = os.path.join(project_root_directory, 'geometry_engine', 'global_signed_distance_field.py')
-    polygon_sdf_path = os.path.join(project_root_directory, 'geometry_engine', 'segment', 'polygon_signed_distance_field.py')
-    segment_path = os.path.join(project_root_directory, 'geometry_engine', 'segment', 'segment.py')
-    collocation_path = os.path.join(project_root_directory, 'physics_domain', 'collocation_sampler.py')
-    maxwell_loss_path = os.path.join(project_root_directory, 'physics_domain', 'physical_equations', 'maxwell_pde_loss.py')
 
-    # 1. curriculum_training_manager.py
-    with open(curriculum_path, 'w', encoding='utf-8') as f:
-        f.write('''import torch
-from training_manager import TrainingManager
-
-class CurriculumTrainingManager:
-    def __init__(self, training_manager_instance: TrainingManager):
-        self.training_manager_instance = training_manager_instance
-
-    def train_source_ramping(self, stages, epochs_per_stage, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        for stage in range(1, stages + 1):
-            alpha = stage / stages
-            
-            current_density_z_tensor_scaled = current_density_z_tensor * alpha
-            coercive_field_x_tensor_scaled = coercive_field_x_tensor * alpha
-            coercive_field_y_tensor_scaled = coercive_field_y_tensor * alpha
-            
-            print(f"--- Curriculum Stage {stage}/{stages} (Alpha = {alpha:.2f}) ---")
-            
-            self.training_manager_instance.train_adam(
-                epochs=epochs_per_stage,
-                points_tensor=points_tensor,
-                reluctivity_tensor=reluctivity_tensor,
-                current_density_z_tensor=current_density_z_tensor_scaled,
-                coercive_field_x_tensor=coercive_field_x_tensor_scaled,
-                coercive_field_y_tensor=coercive_field_y_tensor_scaled
-            )
-            
-        print("--- Curriculum L-BFGS Refinement (Alpha = 1.00) ---")
-        
-        self.training_manager_instance.train_lbfgs(
-            epochs=100, 
-            points_tensor=points_tensor, 
-            reluctivity_tensor=reluctivity_tensor, 
-            current_density_z_tensor=current_density_z_tensor, 
-            coercive_field_x_tensor=coercive_field_x_tensor, 
-            coercive_field_y_tensor=coercive_field_y_tensor
-        )
-''')
-
-    # 2. electro_magnetic_pinn.py
-    with open(electro_magnetic_path, 'w', encoding='utf-8') as f:
-        f.write('''import torch
-from pinn_architecture import PINNArchitecture
-from training_manager import TrainingManager
-from curriculum_training_manager import CurriculumTrainingManager
-from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
-
-class ElectroMagneticPINN:
-    def __init__(self, geometry_engine_instance, collocation_sampler_instance):
-        self.geometry_engine_instance = geometry_engine_instance
-        self.collocation_sampler_instance = collocation_sampler_instance
-        
-        self.L0 = self.collocation_sampler_instance.x_maximum
-        self.H0 = 800000.0
-        self.nu0 = self.geometry_engine_instance.vacuum_reluctivity
-        self.A0 = (self.H0 * self.L0) / self.nu0
-        
-        self.pinn_architecture_instance = PINNArchitecture(domain_scale=self.L0)
-        self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
-        
-        self.training_manager_instance = TrainingManager(
-            model=self.pinn_architecture_instance,
-            pde_evaluator=self.maxwell_pde_loss_instance
-        )
-        
-        self.curriculum_training_manager_instance = CurriculumTrainingManager(
-            training_manager_instance=self.training_manager_instance
-        )
-
-    def execute_training_process(self, number_of_uniform_points, number_of_interface_points, distance_threshold, stages, epochs_per_stage):
-        points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
-            geometry_object=self.geometry_engine_instance,
-            number_of_uniform_points=number_of_uniform_points,
-            number_of_interface_points=number_of_interface_points,
-            distance_threshold=distance_threshold
-        )
-        
-        physical_properties_dictionary = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
-        
-        self.curriculum_training_manager_instance.train_source_ramping(
-            stages=stages,
-            epochs_per_stage=epochs_per_stage,
-            points_tensor=points_tensor,
-            reluctivity_tensor=physical_properties_dictionary["reluctivity"],
-            current_density_z_tensor=physical_properties_dictionary["current_density_z"],
-            coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
-            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
-        )
-
-    def predict_magnetic_vector_potential(self, points_tensor):
-        self.pinn_architecture_instance.eval()
-        with torch.no_grad():
-            A_z_star = self.pinn_architecture_instance(points_tensor)
-        return A_z_star * self.A0
-
-    def evaluate_fields(self, points_tensor):
-        self.pinn_architecture_instance.eval()
-        points_tensor.requires_grad_(True)
-        
-        A_z_star = self.pinn_architecture_instance(points_tensor)
-        A_z_phys = A_z_star * self.A0
-        
-        grad_A = torch.autograd.grad(
-            outputs=A_z_phys,
-            inputs=points_tensor,
-            grad_outputs=torch.ones_like(A_z_phys),
-            create_graph=False,
-            retain_graph=False
-        )[0]
-        
-        B_x = grad_A[:, 1:2]
-        B_y = -grad_A[:, 0:1]
-        
-        return A_z_phys.detach(), B_x.detach(), B_y.detach()
-''')
-
-    # 3. pinn_architecture.py
-    with open(pinn_architecture_path, 'w', encoding='utf-8') as f:
-        f.write('''import torch
-import torch.nn as nn
-
-class PINNArchitecture(nn.Module):
-    def __init__(self, input_dim=2, hidden_layers=4, hidden_neurons=50, output_dim=1, domain_scale=0.05):
-        super().__init__()
-        self.domain_scale = domain_scale
-        
-        layers = []
-        layers.append(nn.Linear(input_dim, hidden_neurons))
-        layers.append(nn.Tanh())
-        
-        for _ in range(hidden_layers - 1):
-            layers.append(nn.Linear(hidden_neurons, hidden_neurons))
-            layers.append(nn.Tanh())
-            
-        layers.append(nn.Linear(hidden_neurons, output_dim))
-        
-        self.network = nn.Sequential(*layers)
-        self._initialize_weights()
-
-    def _initialize_weights(self):
-        for module in self.network:
-            if isinstance(module, nn.Linear):
-                nn.init.xavier_normal_(module.weight)
-                nn.init.zeros_(module.bias)
-
-    def boundary_factor(self, xy):
-        x_factor = 1.0 - (xy[:, 0:1] / self.domain_scale)**2
-        y_factor = 1.0 - (xy[:, 1:2] / self.domain_scale)**2
-        return x_factor * y_factor
-
-    def forward(self, xy):
-        xy_normalized = xy / self.domain_scale
-        raw_output = self.network(xy_normalized)
-        
-        A_z_star = raw_output * self.boundary_factor(xy)
-        return A_z_star
-''')
-
-    # 4. test_simulation.py
-    with open(test_simulation_path, 'w', encoding='utf-8') as f:
-        f.write('''import os
+    test_simulation_code = """import os
 import sys
 
 current_directory = os.path.dirname(os.path.abspath(__file__))
@@ -1131,8 +948,8 @@ def main():
         number_of_uniform_points=2500,
         number_of_interface_points=800,
         distance_threshold=0.005,
-        stages=2,
-        epochs_per_stage=400
+        epochs_adam=800,
+        epochs_lbfgs=100
     )
     
     print("Đang tạo biểu đồ trực quan hóa kết quả trường điện từ...")
@@ -1150,37 +967,64 @@ def main():
     B_y_grid = B_y_pred.numpy().reshape(resolution, resolution)
     B_mag_grid = np.sqrt(B_x_grid**2 + B_y_grid**2)
     
-    fig, axs = plt.subplots(2, 2, figsize=(12, 10))
+    # --- Figure 1: Các biểu đồ cường độ và thành phần (Contours) ---
+    fig1, axs = plt.subplots(2, 2, figsize=(12, 10))
     
     contour_az = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
-    fig.colorbar(contour_az, ax=axs[0, 0], label="A_z (Wb/m)")
+    fig1.colorbar(contour_az, ax=axs[0, 0], label="A_z (Wb/m)")
     axs[0, 0].set_title("Magnetic Vector Potential ($A_z$)")
     axs[0, 0].set_xlabel("x (m)")
     axs[0, 0].set_ylabel("y (m)")
     axs[0, 0].set_aspect('equal')
     
     contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
-    fig.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
+    fig1.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
     axs[0, 1].set_title("Magnetic Flux Density Magnitude ($|B|$)")
     axs[0, 1].set_xlabel("x (m)")
     axs[0, 1].set_ylabel("y (m)")
     axs[0, 1].set_aspect('equal')
     
     contour_bx = axs[1, 0].contourf(X_grid, Y_grid, B_x_grid, levels=60, cmap="coolwarm")
-    fig.colorbar(contour_bx, ax=axs[1, 0], label="B_x (T)")
+    fig1.colorbar(contour_bx, ax=axs[1, 0], label="B_x (T)")
     axs[1, 0].set_title("Magnetic Field Component ($B_x$)")
     axs[1, 0].set_xlabel("x (m)")
     axs[1, 0].set_ylabel("y (m)")
     axs[1, 0].set_aspect('equal')
     
     contour_by = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=60, cmap="coolwarm")
-    fig.colorbar(contour_by, ax=axs[1, 1], label="B_y (T)")
+    fig1.colorbar(contour_by, ax=axs[1, 1], label="B_y (T)")
     axs[1, 1].set_title("Magnetic Field Component ($B_y$)")
     axs[1, 1].set_xlabel("x (m)")
     axs[1, 1].set_ylabel("y (m)")
     axs[1, 1].set_aspect('equal')
     
-    plt.tight_layout()
+    fig1.tight_layout()
+    
+    # --- Figure 2: Biểu đồ Vector Mật độ từ thông (Quiver plot) ---
+    fig2, ax2 = plt.subplots(figsize=(8, 7))
+    
+    # Vẽ nền làm mờ hiển thị cường độ |B|
+    contour_b_bg = ax2.contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow", alpha=0.4)
+    fig2.colorbar(contour_b_bg, ax=ax2, label="|B| (T)")
+    
+    # Lấy mẫu thưa hơn (stride = 4) để vẽ vector tránh bị rối do lưới 120x120 quá dày
+    step = 4
+    X_sub = X_grid[::step, ::step]
+    Y_sub = Y_grid[::step, ::step]
+    Bx_sub = B_x_grid[::step, ::step]
+    By_sub = B_y_grid[::step, ::step]
+    
+    # Vẽ đồ thị vector (Quiver plot)
+    ax2.quiver(X_sub, Y_sub, Bx_sub, By_sub, color='black', pivot='mid')
+    
+    ax2.set_title("Magnetic Flux Density Vectors (B)")
+    ax2.set_xlabel("x (m)")
+    ax2.set_ylabel("y (m)")
+    ax2.set_aspect('equal')
+    
+    fig2.tight_layout()
+    
+    # Hiển thị tất cả các biểu đồ
     plt.show()
 
 
