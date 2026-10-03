@@ -13,6 +13,13 @@ from geometry_engine.segment.segment import Segment
 from physics_domain.collocation_sampler import CollocationSampler
 from electro_magnetic_pinn import ElectroMagneticPINN
 
+# Tích hợp Global Seed đảm bảo tính Reproducibility
+GLOBAL_SEED = 42
+torch.manual_seed(GLOBAL_SEED)
+np.random.seed(GLOBAL_SEED)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(GLOBAL_SEED)
+
 def main():
     geometry_instance = Geometry()
     

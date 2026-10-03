@@ -1,135 +1,128 @@
 import os
 
-def execute_scenario_1_autograd_and_seed():
+def execute_scenario_2_sampling_and_boundary():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     project_root_directory = os.path.abspath(os.path.join(base_directory, '..'))
     
-    training_manager_path = os.path.join(project_root_directory, 'training_manager.py')
-    curriculum_path = os.path.join(project_root_directory, 'curriculum_training_manager.py')
-    pinn_path = os.path.join(project_root_directory, 'electro_magnetic_pinn.py')
-    test_path = os.path.join(project_root_directory, 'test_simulation.py')
+    collocation_path = os.path.join(project_root_directory, 'physics_domain', 'collocation_sampler.py')
+    pinn_path = os.path.join(project_root_directory, 'pinn_architecture.py')
+    electro_magnetic_path = os.path.join(project_root_directory, 'electro_magnetic_pinn.py')
 
-    # 1. Cập nhật TrainingManager: Đưa tính toán vật lý vào trong compute_loss để giải phóng VRAM
-    training_manager_source_code = """import torch
-import torch.optim as optim
+    # 1. Nâng cấp CollocationSampler: Tích hợp Sobol và max_attempts
+    collocation_source_code = """import torch
 
-class TrainingManager:
-    def __init__(self, model, pde_evaluator, geometry_engine_instance, lr_adam=1e-3):
-        self.model = model
-        self.pde_evaluator = pde_evaluator
-        self.geometry_engine_instance = geometry_engine_instance
-        
-        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
-        
-        self.optimizer_lbfgs = optim.LBFGS(
-            self.model.parameters(),
-            lr=1.0,
-            max_iter=50,
-            max_eval=50,
-            tolerance_grad=1e-7,
-            tolerance_change=1e-9,
-            history_size=100,
-            line_search_fn="strong_wolfe"
-        )
+class CollocationSampler:
+    def __init__(self, x_boundaries_tuple, y_boundaries_tuple):
+        self.x_minimum = x_boundaries_tuple[0]
+        self.x_maximum = x_boundaries_tuple[1]
+        self.y_minimum = y_boundaries_tuple[0]
+        self.y_maximum = y_boundaries_tuple[1]
+        # Khởi tạo engine tạo số giả ngẫu nhiên phân bố đều (Sobol)
+        self.sobol_engine = torch.quasirandom.SobolEngine(dimension=2, scramble=True)
 
-    def compute_loss(self, points_tensor, alpha=1.0):
-        # Tính toán thuộc tính vật lý động (dynamic) để đồ thị đạo hàm được khởi tạo và hủy gọn gàng trong 1 epoch
-        phys_props = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
-        nu = phys_props["reluctivity"]
-        J_z = phys_props["current_density_z"] * alpha
-        H_cx = phys_props["coercive_field_x"] * alpha
-        H_cy = phys_props["coercive_field_y"] * alpha
+    def generate_uniform_points_tensor(self, number_of_points):
+        sobol_points = self.sobol_engine.draw(number_of_points)
+        points_tensor = torch.zeros_like(sobol_points, dtype=torch.float32)
+        points_tensor[:, 0] = sobol_points[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
+        points_tensor[:, 1] = sobol_points[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
+        points_tensor.requires_grad_(True)
+        return points_tensor
 
-        A_z_star = self.model(points_tensor)
+    def generate_interface_points_tensor(self, geometry_object, number_of_points, distance_threshold, max_attempts=50):
+        collected_points = []
+        collected_count = 0
+        pool_size_value = number_of_points * 20
+        attempts = 0
         
-        residual_star = self.pde_evaluator.compute_residual(
-            xy=points_tensor,
-            A_z_star=A_z_star,
-            nu=nu,
-            J_z=J_z,
-            H_cx=H_cx,
-            H_cy=H_cy
-        )
-        
-        loss_pde = torch.mean(residual_star**2)
-        return loss_pde
-
-    def train_adam(self, epochs, points_tensor, alpha):
-        self.model.train()
-        best_loss = float('inf')
-        best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
-        
-        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
-        
-        for epoch in range(epochs):
-            self.optimizer_adam.zero_grad()
+        while collected_count < number_of_points and attempts < max_attempts:
+            attempts += 1
+            sobol_pool = self.sobol_engine.draw(pool_size_value)
+            points_pool_tensor = torch.zeros_like(sobol_pool, dtype=torch.float32)
+            points_pool_tensor[:, 0] = sobol_pool[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
+            points_pool_tensor[:, 1] = sobol_pool[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
             
-            loss = self.compute_loss(points_tensor, alpha)
+            signed_distance_field_tensor = geometry_object.compute_global_signed_distance_field(points_pool_tensor)
+            mask_tensor = torch.abs(signed_distance_field_tensor) < distance_threshold
+            mask_1d = mask_tensor.squeeze()
             
-            if torch.isnan(loss) or loss.item() > 10.0 * best_loss:
-                self.model.load_state_dict(best_model_state)
-                for param_group in self.optimizer_adam.param_groups:
-                    param_group['lr'] *= 0.8
-                continue
+            if mask_1d.any():
+                valid_points = points_pool_tensor[mask_1d]
+                collected_points.append(valid_points)
+                collected_count += valid_points.shape[0]
                 
-            # ĐÃ XÓA retain_graph=True. Giải phóng VRAM hoàn toàn!
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-            self.optimizer_adam.step()
-            scheduler_adam.step()
+        if attempts == max_attempts and collected_count < number_of_points:
+            print(f"[CẢNH BÁO] Lấy mẫu Interface đạt max_attempts ({max_attempts}). Chỉ thu được {collected_count}/{number_of_points} điểm.")
             
-            current_loss_value = loss.item()
-            if current_loss_value < best_loss:
-                best_loss = current_loss_value
-                best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
-            
-            if (epoch + 1) % 100 == 0:
-                current_lr = self.optimizer_adam.param_groups[0]['lr']
-                print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {current_lr:.3e}")
+        if collected_count == 0:
+            return self.generate_uniform_points_tensor(number_of_points)
 
-    def train_lbfgs(self, epochs, points_tensor, alpha):
-        self.model.train()
-        for epoch in range(epochs):
-            def closure():
-                self.optimizer_lbfgs.zero_grad()
-                loss = self.compute_loss(points_tensor, alpha)
-                loss.backward()
-                return loss
-            
-            loss_val = self.optimizer_lbfgs.step(closure)
-            print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
-"""
+        interface_points_tensor = torch.cat(collected_points, dim=0)[:number_of_points, :]
+        interface_points_tensor = interface_points_tensor.detach().clone()
+        interface_points_tensor.requires_grad_(True)
+        return interface_points_tensor
 
-    # 2. Cập nhật Curriculum: Loại bỏ việc truyền tensor tĩnh
-    curriculum_source_code = """import torch
-from training_manager import TrainingManager
-
-class CurriculumTrainingManager:
-    def __init__(self, training_manager_instance: TrainingManager):
-        self.training_manager_instance = training_manager_instance
-
-    def train_source_ramping(self, stages, epochs_per_stage, points_tensor):
-        for stage in range(1, stages + 1):
-            alpha = stage / stages
-            print(f"--- Curriculum Stage {stage}/{stages} (Alpha = {alpha:.2f}) ---")
-            
-            self.training_manager_instance.train_adam(
-                epochs=epochs_per_stage,
-                points_tensor=points_tensor,
-                alpha=alpha
-            )
-            
-        print("--- Curriculum L-BFGS Refinement (Alpha = 1.00) ---")
+    def generate_combined_points_tensor(self, geometry_object, number_of_uniform_points, number_of_interface_points, distance_threshold):
+        uniform_points_tensor = self.generate_uniform_points_tensor(number_of_uniform_points)
+        interface_points_tensor = self.generate_interface_points_tensor(geometry_object, number_of_interface_points, distance_threshold)
         
-        self.training_manager_instance.train_lbfgs(
-            epochs=100, 
-            points_tensor=points_tensor, 
-            alpha=1.0
-        )
+        combined_points_tensor = torch.cat([uniform_points_tensor, interface_points_tensor], dim=0)
+        combined_points_tensor = combined_points_tensor.detach().clone()
+        combined_points_tensor.requires_grad_(True)
+        return combined_points_tensor
 """
 
-    # 3. Cập nhật PINN: Bổ sung liên kết geometry_engine cho TrainingManager
-    pinn_source_code = """import torch
+    # 2. Cập nhật PINN Architecture: Tổng quát hóa Hard Boundary cho hình chữ nhật bất kỳ
+    pinn_architecture_source_code = """import torch
+import torch.nn as nn
+
+class PINNArchitecture(nn.Module):
+    def __init__(self, input_dim=2, hidden_layers=4, hidden_neurons=50, output_dim=1, x_bounds=(-0.05, 0.05), y_bounds=(-0.05, 0.05)):
+        super().__init__()
+        self.x_min, self.x_max = x_bounds
+        self.y_min, self.y_max = y_bounds
+        
+        layers = []
+        layers.append(nn.Linear(input_dim, hidden_neurons))
+        layers.append(nn.Tanh())
+        
+        for _ in range(hidden_layers - 1):
+            layers.append(nn.Linear(hidden_neurons, hidden_neurons))
+            layers.append(nn.Tanh())
+            
+        layers.append(nn.Linear(hidden_neurons, output_dim))
+        
+        self.network = nn.Sequential(*layers)
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for module in self.network:
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_normal_(module.weight)
+                nn.init.zeros_(module.bias)
+
+    def boundary_factor(self, xy):
+        # Chuyển đổi tọa độ thành xi, eta trong khoảng [-1, 1]
+        xi = (2.0 * xy[:, 0:1] - (self.x_max + self.x_min)) / (self.x_max - self.x_min)
+        eta = (2.0 * xy[:, 1:2] - (self.y_max + self.y_min)) / (self.y_max - self.y_min)
+        
+        x_factor = 1.0 - xi**2
+        y_factor = 1.0 - eta**2
+        return x_factor * y_factor
+
+    def forward(self, xy):
+        # Chuẩn hóa đầu vào của mạng Nơ-ron về [-1, 1]
+        xi = (2.0 * xy[:, 0:1] - (self.x_max + self.x_min)) / (self.x_max - self.x_min)
+        eta = (2.0 * xy[:, 1:2] - (self.y_max + self.y_min)) / (self.y_max - self.y_min)
+        xy_normalized = torch.cat([xi, eta], dim=1)
+        
+        raw_output = self.network(xy_normalized)
+        
+        A_z_star = raw_output * self.boundary_factor(xy)
+        return A_z_star
+"""
+
+    # 3. Cập nhật ElectroMagneticPINN để truyền tuple boundary vào mạng nơ-ron thay vì scale tĩnh
+    electro_magnetic_source_code = """import torch
 from pinn_architecture import PINNArchitecture
 from training_manager import TrainingManager
 from curriculum_training_manager import CurriculumTrainingManager
@@ -140,12 +133,17 @@ class ElectroMagneticPINN:
         self.geometry_engine_instance = geometry_engine_instance
         self.collocation_sampler_instance = collocation_sampler_instance
         
-        self.L0 = self.collocation_sampler_instance.x_maximum
+        # Tham chiếu dựa trên kích thước miền lấy mẫu lớn nhất
+        self.L0 = max(abs(self.collocation_sampler_instance.x_maximum), abs(self.collocation_sampler_instance.x_minimum))
         self.H0 = 800000.0
         self.nu0 = self.geometry_engine_instance.vacuum_reluctivity
         self.A0 = (self.H0 * self.L0) / self.nu0
         
-        self.pinn_architecture_instance = PINNArchitecture(domain_scale=self.L0)
+        # [CẬP NHẬT] Truyền trực tiếp giới hạn không gian để tính biên tổng quát
+        self.pinn_architecture_instance = PINNArchitecture(
+            x_bounds=(self.collocation_sampler_instance.x_minimum, self.collocation_sampler_instance.x_maximum),
+            y_bounds=(self.collocation_sampler_instance.y_minimum, self.collocation_sampler_instance.y_maximum)
+        )
         self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
         
         self.training_manager_instance = TrainingManager(
@@ -166,7 +164,6 @@ class ElectroMagneticPINN:
             distance_threshold=distance_threshold
         )
         
-        # Chỉ cần truyền points_tensor, các thuộc tính vật lý sẽ được tính động bên trong
         self.curriculum_training_manager_instance.train_source_ramping(
             stages=stages,
             epochs_per_stage=epochs_per_stage,
@@ -200,142 +197,11 @@ class ElectroMagneticPINN:
         return A_z_phys.detach(), B_x.detach(), B_y.detach()
 """
 
-    # 4. Cập nhật Test: Bổ sung Global Seed
-    test_source_code = """import os
-import sys
-
-current_directory = os.path.dirname(os.path.abspath(__file__))
-if current_directory not in sys.path:
-    sys.path.insert(0, current_directory)
-
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-from geometry_engine.geometry import Geometry
-from geometry_engine.segment.segment import Segment
-from physics_domain.collocation_sampler import CollocationSampler
-from electro_magnetic_pinn import ElectroMagneticPINN
-
-# Tích hợp Global Seed đảm bảo tính Reproducibility
-GLOBAL_SEED = 42
-torch.manual_seed(GLOBAL_SEED)
-np.random.seed(GLOBAL_SEED)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(GLOBAL_SEED)
-
-def main():
-    geometry_instance = Geometry()
-    
-    top_magnet_vertices = [
-        [-0.03, 0.015],
-        [0.03, 0.015],
-        [0.03, 0.025],
-        [-0.03, 0.025]
-    ]
-    top_magnet = Segment(top_magnet_vertices).set_material_properties(
-        name="top_magnet",
-        relative_permeability=1.05,
-        coercive_field_x=800000.0,
-        coercive_field_y=0.0
-    )
-    geometry_instance.add_segment(top_magnet)
-
-    bottom_magnet_vertices = [
-        [-0.03, -0.025],
-        [0.03, -0.025],
-        [0.03, -0.015],
-        [-0.03, -0.015]
-    ]
-    bottom_magnet = Segment(bottom_magnet_vertices).set_material_properties(
-        name="bottom_magnet",
-        relative_permeability=1.05,
-        coercive_field_x=800000.0,
-        coercive_field_y=0.0
-    )
-    geometry_instance.add_segment(bottom_magnet)
-    
-    collocation_sampler_instance = CollocationSampler(
-        x_boundaries_tuple=(-0.05, 0.05),
-        y_boundaries_tuple=(-0.05, 0.05)
-    )
-
-    geometry_instance.plot_problem_definition(
-        x_boundaries_tuple=(-0.05, 0.05),
-        y_boundaries_tuple=(-0.05, 0.05),
-        resolution=100
-    )
-
-    model = ElectroMagneticPINN(
-        geometry_engine_instance=geometry_instance,
-        collocation_sampler_instance=collocation_sampler_instance
-    )
-    
-    model.execute_training_process(
-        number_of_uniform_points=2500,
-        number_of_interface_points=800,
-        distance_threshold=0.005,
-        stages=2,
-        epochs_per_stage=400
-    )
-    
-    print("Đang tạo biểu đồ trực quan hóa kết quả trường điện từ...")
-    resolution = 120
-    x_coords = np.linspace(-0.05, 0.05, resolution)
-    y_coords = np.linspace(-0.05, 0.05, resolution)
-    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
-    
-    xy_points_tensor = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
-    
-    A_z_pred, B_x_pred, B_y_pred = model.evaluate_fields(xy_points_tensor)
-    
-    A_z_grid = A_z_pred.numpy().reshape(resolution, resolution)
-    B_x_grid = B_x_pred.numpy().reshape(resolution, resolution)
-    B_y_grid = B_y_pred.numpy().reshape(resolution, resolution)
-    B_mag_grid = np.sqrt(B_x_grid**2 + B_y_grid**2)
-    
-    fig, axs = plt.subplots(2, 2, figsize=(12, 10))
-    
-    contour_az = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
-    fig.colorbar(contour_az, ax=axs[0, 0], label="A_z (Wb/m)")
-    axs[0, 0].set_title("Magnetic Vector Potential ($A_z$)")
-    axs[0, 0].set_xlabel("x (m)")
-    axs[0, 0].set_ylabel("y (m)")
-    axs[0, 0].set_aspect('equal')
-    
-    contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
-    fig.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
-    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($|B|$)")
-    axs[0, 1].set_xlabel("x (m)")
-    axs[0, 1].set_ylabel("y (m)")
-    axs[0, 1].set_aspect('equal')
-    
-    contour_bx = axs[1, 0].contourf(X_grid, Y_grid, B_x_grid, levels=60, cmap="coolwarm")
-    fig.colorbar(contour_bx, ax=axs[1, 0], label="B_x (T)")
-    axs[1, 0].set_title("Magnetic Field Component ($B_x$)")
-    axs[1, 0].set_xlabel("x (m)")
-    axs[1, 0].set_ylabel("y (m)")
-    axs[1, 0].set_aspect('equal')
-    
-    contour_by = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=60, cmap="coolwarm")
-    fig.colorbar(contour_by, ax=axs[1, 1], label="B_y (T)")
-    axs[1, 1].set_title("Magnetic Field Component ($B_y$)")
-    axs[1, 1].set_xlabel("x (m)")
-    axs[1, 1].set_ylabel("y (m)")
-    axs[1, 1].set_aspect('equal')
-    
-    plt.tight_layout()
-    plt.show()
-
-if __name__ == '__main__':
-    main()
-"""
-
-    with open(training_manager_path, 'w', encoding='utf-8') as f: f.write(training_manager_source_code)
-    with open(curriculum_path, 'w', encoding='utf-8') as f: f.write(curriculum_source_code)
-    with open(pinn_path, 'w', encoding='utf-8') as f: f.write(pinn_source_code)
-    with open(test_path, 'w', encoding='utf-8') as f: f.write(test_source_code)
+    with open(collocation_path, 'w', encoding='utf-8') as f: f.write(collocation_source_code)
+    with open(pinn_path, 'w', encoding='utf-8') as f: f.write(pinn_architecture_source_code)
+    with open(electro_magnetic_path, 'w', encoding='utf-8') as f: f.write(electro_magnetic_source_code)
         
-    print("Hoàn tất Kịch bản 1: Giải phóng VRAM, loại bỏ retain_graph và cấu hình Global Seed!")
+    print("Hoàn tất Kịch bản 2: Tích hợp Sobol Sampling và Generalized Hard Boundary!")
 
 if __name__ == '__main__':
-    execute_scenario_1_autograd_and_seed()
+    execute_scenario_2_sampling_and_boundary()
