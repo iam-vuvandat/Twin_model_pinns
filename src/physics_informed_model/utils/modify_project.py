@@ -1,13 +1,12 @@
 import os
-import subprocess
 
-def patch_and_push_project():
+def update_source_code_only():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     project_root_directory = os.path.abspath(os.path.join(base_directory, '..'))
     
     electro_magnetic_path = os.path.join(project_root_directory, 'electro_magnetic_pinn.py')
     
-    # Nội dung chuẩn 100% của electro_magnetic_pinn.py (Đã gỡ bỏ hoàn toàn Curriculum, khớp với test_simulation.py)
+    # Nội dung chuẩn 100% của electro_magnetic_pinn.py, khớp hoàn toàn với test_simulation.py
     electro_magnetic_code = """import torch
 from pinn_architecture import PINNArchitecture
 from training_manager import TrainingManager
@@ -88,20 +87,11 @@ class ElectroMagneticPINN:
         return A_z_phys.detach(), B_x.detach(), B_y.detach()
 """
 
-    # Ghi đè file electro_magnetic_pinn.py
+    # Ghi đè file electro_magnetic_pinn.py trực tiếp tại cục bộ
     with open(electro_magnetic_path, 'w', encoding='utf-8') as f:
         f.write(electro_magnetic_code)
-    print("Đã vá xong tệp electro_magnetic_pinn.py!")
-
-    # Tự động đẩy code lên GitHub để Colab nhận diện bản cập nhật mới nhất
-    print("Đang đồng bộ code lên GitHub...")
-    try:
-        subprocess.run(["git", "add", "."], check=True, cwd=project_root_directory)
-        subprocess.run(["git", "commit", "-m", "Patch electro_magnetic_pinn.py to match test_simulation.py arguments"], check=True, cwd=project_root_directory)
-        subprocess.run(["git", "push", "origin", "main"], check=True, cwd=project_root_directory)
-        print(">> ĐỒNG BỘ GITHUB THÀNH CÔNG! Bây giờ bạn có thể chạy lại trên Colab.")
-    except Exception as e:
-        print(">> Lỗi khi đẩy Git:", e)
+        
+    print("Đã cập nhật xong tệp electro_magnetic_pinn.py thành công (không tương tác với GitHub).")
 
 if __name__ == '__main__':
-    patch_and_push_project()
+    update_source_code_only()
