@@ -8,7 +8,9 @@
     "**/*.gitignore": false,
     "**/*.project_root": true,
     "**/*.log": true,
-    "**/*.spec": true
+    "**/*.spec": true,
+    ".venv":true,
+    ".vscode":true
   },
   "files.autoSave": "off",
   "editor.suggest.snippetsPreventQuickSuggestions": false,
