@@ -1,82 +1,122 @@
 import os
 
-def execute_step_1():
-    # Xác định đường dẫn thư mục gốc
+def execute_step_2():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     project_root_directory = os.path.abspath(os.path.join(base_directory, '..'))
     
-    # Đường dẫn tới tệp cần sửa ở Bước 1
-    target_file_path = os.path.join(
-        project_root_directory, 
-        'geometry_engine', 
-        'global_physical_properties_evaluation.py'
-    )
+    target_file_path = os.path.join(project_root_directory, 'pinn_architecture.py')
     
-    # Nội dung mới của tệp global_physical_properties_evaluation.py
     new_code = """import torch
+import torch.nn as nn
+import numpy as np
 
-def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_reluctivity, steepness=5000.0):
-    number_of_points = points_tensor.shape[0]
-    computation_device = points_tensor.device
-    
-    global_reluctivity_tensor = torch.full((number_of_points, 1), vacuum_reluctivity, dtype=torch.float32, device=computation_device)
-    global_coercive_field_x_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-    global_coercive_field_y_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-    global_current_density_z_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-    global_material_classification_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-
-    material_index_counter = 1.0
-    
-    # BƯỚC 1: Khởi tạo từ điển lưu trữ mặt nạ (masks_dict)
-    masks_dict = {}
-
-    for segment_object in segments_list:
-        signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
+class PINNArchitecture(nn.Module):
+    def __init__(self, input_dim=2, hidden_layers=4, hidden_neurons=64, output_dim=1, domain_scale=0.05, activation_function=nn.SiLU(), use_fourier=True, fourier_features=64, fourier_scale=1.0):
+        super().__init__()
+        self.domain_scale = domain_scale
+        self.use_fourier = use_fourier
         
-        mask_smooth = torch.sigmoid(-steepness * signed_distance_field).view(-1, 1)
-        
-        # Lưu mặt nạ vào từ điển theo tên vật liệu
-        # Nếu có nhiều vật thể cùng loại (VD: 2 khối nam châm), ta cộng dồn mặt nạ của chúng lại
-        mat_name = segment_object.material_name
-        if mat_name in masks_dict:
-            masks_dict[mat_name] = masks_dict[mat_name] + mask_smooth
+        # 1. TÍCH HỢP FOURIER FEATURES (Khắc phục thiên lệch tần số)
+        if self.use_fourier:
+            # Ma trận ngẫu nhiên B (không cập nhật trọng số)
+            self.B = nn.Parameter(torch.randn(input_dim, fourier_features) * fourier_scale, requires_grad=False)
+            network_input_dim = fourier_features * 2  # Gấp đôi vì dùng cả Sin và Cos
         else:
-            masks_dict[mat_name] = mask_smooth
+            network_input_dim = input_dim
+            
+        # 2. KHỐI DÙNG CHUNG (Backbone)
+        common_layers = []
+        common_layers.append(nn.Linear(network_input_dim, hidden_neurons))
+        common_layers.append(activation_function)
         
-        seg_reluctivity = segment_object.evaluate_reluctivity(points_tensor)
-        hx_tensor, hy_tensor = segment_object.evaluate_magnetization_vector(points_tensor)
-        seg_jz = segment_object.evaluate_current_density(points_tensor)
+        # Để lại 1 lớp cuối cùng cho các nhánh chuyên gia
+        for _ in range(max(1, hidden_layers - 1)):
+            common_layers.append(nn.Linear(hidden_neurons, hidden_neurons))
+            common_layers.append(activation_function)
+            
+        self.common_block = nn.Sequential(*common_layers)
         
-        global_reluctivity_tensor = global_reluctivity_tensor + mask_smooth * (seg_reluctivity - vacuum_reluctivity)
-        global_coercive_field_x_tensor = global_coercive_field_x_tensor + mask_smooth * hx_tensor
-        global_coercive_field_y_tensor = global_coercive_field_y_tensor + mask_smooth * hy_tensor
-        global_current_density_z_tensor = global_current_density_z_tensor + mask_smooth * seg_jz
+        # 3. BỐN NHÁNH CHUYÊN GIA SONG SONG
+        self.branch_air = nn.Linear(hidden_neurons, output_dim)
+        self.branch_magnet = nn.Linear(hidden_neurons, output_dim)
+        self.branch_iron = nn.Linear(hidden_neurons, output_dim)
+        self.branch_copper = nn.Linear(hidden_neurons, output_dim)
         
-        global_material_classification_tensor = global_material_classification_tensor + mask_smooth * material_index_counter
-        
-        material_index_counter += 1.0
+        self._initialize_weights()
 
-    # Kẹp (clamp) các giá trị mặt nạ trong khoảng [0, 1] để tránh vượt ngưỡng tại các vùng giao nhau
-    for key in masks_dict:
-        masks_dict[key] = torch.clamp(masks_dict[key], min=0.0, max=1.0)
+    def _initialize_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_normal_(module.weight)
+                nn.init.zeros_(module.bias)
 
-    # Trả về thêm masks_dict để phân luồng cho mạng nơ-ron chuyên gia
-    return {
-        "reluctivity": global_reluctivity_tensor,
-        "coercive_field_x": global_coercive_field_x_tensor,
-        "coercive_field_y": global_coercive_field_y_tensor,
-        "current_density_z": global_current_density_z_tensor,
-        "material_classification": global_material_classification_tensor,
-        "masks_dict": masks_dict
-    }
+    def boundary_factor(self, xy):
+        x_factor = 1.0 - (xy[:, 0:1] / self.domain_scale)**2
+        y_factor = 1.0 - (xy[:, 1:2] / self.domain_scale)**2
+        return x_factor * y_factor
+
+    def forward(self, xy, masks_dict=None):
+        xy_normalized = xy / self.domain_scale
+        
+        # Ánh xạ Fourier
+        if self.use_fourier:
+            x_proj = (2.0 * np.pi * xy_normalized) @ self.B
+            xy_input = torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)
+        else:
+            xy_input = xy_normalized
+            
+        # Đi qua khối chung
+        z = self.common_block(xy_input)
+        
+        # 4 nhánh tính toán song song
+        f_air = self.branch_air(z)
+        f_mag = self.branch_magnet(z)
+        f_iron = self.branch_iron(z)
+        f_copper = self.branch_copper(z)
+        
+        # Trộn nghiệm bằng mặt nạ
+        if masks_dict is not None:
+            m_mag = 0.0
+            m_iron = 0.0
+            m_copper = 0.0
+            
+            # Lọc linh hoạt theo tên vật liệu chứa từ khóa (VD: 'top_magnet' -> magnet)
+            for k, v in masks_dict.items():
+                k_lower = k.lower()
+                if 'magnet' in k_lower:
+                    m_mag = m_mag + v
+                elif 'iron' in k_lower:
+                    m_iron = m_iron + v
+                elif 'copper' in k_lower:
+                    m_copper = m_copper + v
+            
+            # Đảm bảo mask là Tensor và không vượt quá 1.0
+            def format_mask(m):
+                if isinstance(m, float): return torch.tensor(m, device=xy.device)
+                return torch.clamp(m, 0.0, 1.0)
+                
+            m_mag = format_mask(m_mag)
+            m_iron = format_mask(m_iron)
+            m_copper = format_mask(m_copper)
+            
+            # Tính mask không khí (phần còn trống)
+            m_air = 1.0 - torch.clamp(m_mag + m_iron + m_copper, 0.0, 1.0)
+            
+            # Khóa Đạo hàm (Gradient Masking)
+            raw_output = (f_air * m_air) + (f_mag * m_mag) + (f_iron * m_iron) + (f_copper * m_copper)
+        else:
+            # Fallback nếu không truyền mask_dict
+            raw_output = f_air + f_mag + f_iron + f_copper
+            
+        A_z_star = raw_output * self.boundary_factor(xy)
+        return A_z_star
 """
     
-    # Ghi đè file
     with open(target_file_path, 'w', encoding='utf-8') as f:
         f.write(new_code)
         
-    print(f"BƯỚC 1 HOÀN TẤT: Đã cập nhật thành công tệp:\n{target_file_path}")
-    print("Hàm evaluate_global_physical_properties hiện đã trích xuất và trả về masks_dict.")
+    print(f"BƯỚC 2 HOÀN TẤT: Đã cập nhật thành công tệp:\n{target_file_path}")
+    print("Mạng nơ-ron hiện đã có 4 nhánh chuyên gia và tích hợp Ánh xạ Fourier.")
 
 if __name__ == "__main__":
-    execute_step_1()
+    execute_step_2()

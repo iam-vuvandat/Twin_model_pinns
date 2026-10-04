@@ -11,11 +11,22 @@ def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_rel
     global_material_classification_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
 
     material_index_counter = 1.0
+    
+    # BƯỚC 1: Khởi tạo từ điển lưu trữ mặt nạ (masks_dict)
+    masks_dict = {}
 
     for segment_object in segments_list:
         signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
         
         mask_smooth = torch.sigmoid(-steepness * signed_distance_field).view(-1, 1)
+        
+        # Lưu mặt nạ vào từ điển theo tên vật liệu
+        # Nếu có nhiều vật thể cùng loại (VD: 2 khối nam châm), ta cộng dồn mặt nạ của chúng lại
+        mat_name = segment_object.material_name
+        if mat_name in masks_dict:
+            masks_dict[mat_name] = masks_dict[mat_name] + mask_smooth
+        else:
+            masks_dict[mat_name] = mask_smooth
         
         seg_reluctivity = segment_object.evaluate_reluctivity(points_tensor)
         hx_tensor, hy_tensor = segment_object.evaluate_magnetization_vector(points_tensor)
@@ -30,10 +41,16 @@ def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_rel
         
         material_index_counter += 1.0
 
+    # Kẹp (clamp) các giá trị mặt nạ trong khoảng [0, 1] để tránh vượt ngưỡng tại các vùng giao nhau
+    for key in masks_dict:
+        masks_dict[key] = torch.clamp(masks_dict[key], min=0.0, max=1.0)
+
+    # Trả về thêm masks_dict để phân luồng cho mạng nơ-ron chuyên gia
     return {
         "reluctivity": global_reluctivity_tensor,
         "coercive_field_x": global_coercive_field_x_tensor,
         "coercive_field_y": global_coercive_field_y_tensor,
         "current_density_z": global_current_density_z_tensor,
-        "material_classification": global_material_classification_tensor
+        "material_classification": global_material_classification_tensor,
+        "masks_dict": masks_dict
     }
