@@ -1,5 +1,5 @@
 """
-version 1.2.0 - Updated with Flexible PINN API and Steepness
+version 2.0.0 - Mixture of Experts (3 Materials: Iron, Magnet, Air)
 """
 import os
 import sys
@@ -18,65 +18,82 @@ from physics_domain.collocation_sampler import CollocationSampler
 from electro_magnetic_pinn import ElectroMagneticPINN
 
 def main():
-    # 1. Khởi tạo hình học với ranh giới gắt hơn (steepness=5000.0)
+    # 1. KHỞI TẠO HÌNH HỌC (Steepness cao để ranh giới rõ nét)
     geometry_instance = Geometry(steepness=5000.0)
     
-    top_magnet_vertices = [
-        [-0.03, 0.015],
-        [0.03, 0.015],
-        [0.03, 0.025],
-        [-0.03, 0.025]
+    # --- VẬT THỂ 1: THANH SẮT TỪ (NẰM NGANG Ở TRÊN) ---
+    # Hình chữ nhật: Rộng từ x = -0.04 đến 0.04; Cao từ y = 0.02 đến 0.03
+    iron_bar_vertices = [
+        [-0.04, 0.02],
+        [ 0.04, 0.02],
+        [ 0.04, 0.03],
+        [-0.04, 0.03]
     ]
-    top_magnet = Segment(top_magnet_vertices).set_material_properties(
-        name="top_magnet",
-        relative_permeability=1.05,
-        coercive_field_x=800000.0,
+    iron_bar = Segment(iron_bar_vertices).set_material_properties(
+        name="iron", # Tên 'iron' sẽ kích hoạt nhánh f_iron trong mạng MoE
+        relative_permeability=2000.0, # Sắt có độ từ thẩm rất cao, dẫn từ tốt
+        coercive_field_x=0.0,
         coercive_field_y=0.0
     )
-    geometry_instance.add_segment(top_magnet)
+    geometry_instance.add_segment(iron_bar)
 
-    bottom_magnet_vertices = [
-        [-0.03, -0.025],
-        [0.03, -0.025],
-        [0.03, -0.015],
-        [-0.03, -0.015]
+    # --- VẬT THỂ 2: NAM CHÂM CHỮ U (NẰM DƯỚI) ---
+    # Tọa độ đa giác lõm (Hình chữ U) vẽ theo chiều ngược kim đồng hồ
+    magnet_u_vertices = [
+        [-0.04, 0.01],   # Góc trên-trái (ngoài)
+        [-0.02, 0.01],   # Góc trên-trái (trong)
+        [-0.02, -0.02],  # Góc dưới-trái (trong)
+        [ 0.02, -0.02],  # Góc dưới-phải (trong)
+        [ 0.02, 0.01],   # Góc trên-phải (trong)
+        [ 0.04, 0.01],   # Góc trên-phải (ngoài)
+        [ 0.04, -0.04],  # Góc dưới-phải (ngoài)
+        [-0.04, -0.04]   # Góc dưới-trái (ngoài)
     ]
-    bottom_magnet = Segment(bottom_magnet_vertices).set_material_properties(
-        name="bottom_magnet",
+    magnet_u_shape = Segment(magnet_u_vertices).set_material_properties(
+        name="magnet", # Tên 'magnet' sẽ kích hoạt nhánh f_mag trong mạng MoE
         relative_permeability=1.05,
-        coercive_field_x=-800000.0,
-        coercive_field_y=0.0
+        coercive_field_x=0.0,
+        coercive_field_y=800000.0 # Từ hóa hướng lên trên
     )
-    geometry_instance.add_segment(bottom_magnet)
+    geometry_instance.add_segment(magnet_u_shape)
     
+    # 2. KHỞI TẠO BỘ LẤY MẪU
     collocation_sampler_instance = CollocationSampler(
         x_boundaries_tuple=(-0.05, 0.05),
         y_boundaries_tuple=(-0.05, 0.05)
     )
 
+    # In ra sơ đồ hình học để kiểm tra (SDF, mu_r, Hc)
+    print("Vẽ sơ đồ bài toán hình học...")
     geometry_instance.plot_problem_definition(
         x_boundaries_tuple=(-0.05, 0.05),
         y_boundaries_tuple=(-0.05, 0.05),
-        resolution=100
+        resolution=150
     )
 
-    # 2. Sử dụng API linh hoạt để cấu hình mạng PINN
+    # 3. CẤU HÌNH MẠNG NƠ-RON HỖN HỢP CHUYÊN GIA (MoE)
     model = ElectroMagneticPINN(
         geometry_engine_instance=geometry_instance,
         collocation_sampler_instance=collocation_sampler_instance,
-        hidden_layers=6,               # Thay đổi từ 4 lên 6 lớp
-        hidden_neurons=64,             # Thay đổi từ 50 lên 64 nơ-ron
-        activation_function=nn.Tanh()  # Đổi hàm kích hoạt sang Tanh
+        hidden_layers=5,               
+        hidden_neurons=64,             
+        activation_function=nn.Tanh(), # Tanh kết hợp tốt với Fourier
+        use_fourier=True,              # Kích hoạt Fourier Features
+        fourier_features=64,           
+        fourier_scale=1.5              
     )
     
+    # 4. TIẾN HÀNH HUẤN LUYỆN
+    print("Bắt đầu huấn luyện mạng PINN phân nhánh...")
     model.execute_training_process(
-        number_of_uniform_points=2500,
-        number_of_interface_points=800,
+        number_of_uniform_points=3000,   # Tăng số điểm lấy mẫu
+        number_of_interface_points=1200, # Tăng số điểm tại ranh giới
         distance_threshold=0.005,
-        epochs_adam=800,
-        epochs_lbfgs=100
+        epochs_adam=1200,                # Adam phá vỡ thiên lệch tần số
+        epochs_lbfgs=200                 # L-BFGS tinh chỉnh nghiệm
     )
     
+    # 5. ĐÁNH GIÁ VÀ TRỰC QUAN HÓA KẾT QUẢ
     print("Đang tạo biểu đồ trực quan hóa kết quả trường điện từ...")
     resolution = 120
     x_coords = np.linspace(-0.05, 0.05, resolution)
@@ -128,18 +145,15 @@ def main():
     # --- Figure 2: Biểu đồ Vector Mật độ từ thông (Quiver plot) ---
     fig2, ax2 = plt.subplots(figsize=(8, 7))
     
-    # Vẽ nền làm mờ hiển thị cường độ |B|
     contour_b_bg = ax2.contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow", alpha=0.4)
     fig2.colorbar(contour_b_bg, ax=ax2, label="|B| (T)")
     
-    # Lấy mẫu thưa hơn (stride = 4) để vẽ vector tránh bị rối do lưới 120x120 quá dày
     step = 4
     X_sub = X_grid[::step, ::step]
     Y_sub = Y_grid[::step, ::step]
     Bx_sub = B_x_grid[::step, ::step]
     By_sub = B_y_grid[::step, ::step]
     
-    # Vẽ đồ thị vector (Quiver plot)
     ax2.quiver(X_sub, Y_sub, Bx_sub, By_sub, color='black', pivot='mid')
     
     ax2.set_title("Magnetic Flux Density Vectors (B)")
@@ -148,8 +162,6 @@ def main():
     ax2.set_aspect('equal')
     
     fig2.tight_layout()
-    
-    # Hiển thị tất cả các biểu đồ
     plt.show()
 
 if __name__ == "__main__":
