@@ -2,9 +2,11 @@ import torch
 import torch.optim as optim
 
 class TrainingManager:
-    def __init__(self, model, pde_evaluator, lr_adam=1e-3):
+    # 1. THÊM target_loss VÀO HÀM KHỞI TẠO
+    def __init__(self, model, pde_evaluator, lr_adam=1e-3, target_loss=1e-3):
         self.model = model
         self.pde_evaluator = pde_evaluator
+        self.target_loss = target_loss
         
         self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
         
@@ -61,6 +63,12 @@ class TrainingManager:
             scheduler_adam.step()
             
             current_loss_value = loss.item()
+            
+            # 2. SỬ DỤNG THUỘC TÍNH CỦA LỚP ĐỂ KIỂM TRA
+            if self.target_loss > 0 and current_loss_value < self.target_loss:
+                print(f"Adam Epoch {epoch + 1}: Đạt ngưỡng loss mục tiêu < {self.target_loss} ({current_loss_value:.6e}). KẾT THÚC ADAM SỚM!")
+                break
+            
             if current_loss_value < best_loss:
                 best_loss = current_loss_value
                 best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
@@ -83,3 +91,8 @@ class TrainingManager:
             
             loss_val = self.optimizer_lbfgs.step(closure)
             print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
+            
+            # 3. SỬ DỤNG THUỘC TÍNH CỦA LỚP ĐỂ KIỂM TRA
+            if self.target_loss > 0 and loss_val.item() < self.target_loss:
+                print(f"L-BFGS Epoch {epoch + 1}: Đạt ngưỡng loss mục tiêu < {self.target_loss} ({loss_val.item():.6e}). KẾT THÚC L-BFGS SỚM!")
+                break

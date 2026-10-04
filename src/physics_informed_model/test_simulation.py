@@ -18,7 +18,6 @@ from physics_domain.collocation_sampler import CollocationSampler
 from electro_magnetic_pinn import ElectroMagneticPINN
 
 def main():
-    # 1. Khởi tạo hình học với ranh giới gắt hơn (steepness=5000.0)
     geometry_instance = Geometry(steepness=5000.0)
     
     top_magnet_vertices = [
