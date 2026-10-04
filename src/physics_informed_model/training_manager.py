@@ -19,8 +19,10 @@ class TrainingManager:
             line_search_fn="strong_wolfe"
         )
 
-    def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        A_z_star = self.model(points_tensor)
+    # Bổ sung masks_dict vào tham số
+    def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor, masks_dict):
+        # Truyền masks_dict vào mạng nơ-ron để gộp nghiệm từ 4 nhánh chuyên gia
+        A_z_star = self.model(points_tensor, masks_dict)
         
         residual_star = self.pde_evaluator.compute_residual(
             xy=points_tensor,
@@ -34,7 +36,8 @@ class TrainingManager:
         loss_pde = torch.mean(residual_star**2)
         return loss_pde
 
-    def train_adam(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+    # Bổ sung masks_dict vào tham số
+    def train_adam(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor, masks_dict):
         self.model.train()
         best_loss = float('inf')
         best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
@@ -44,9 +47,10 @@ class TrainingManager:
         for epoch in range(epochs):
             self.optimizer_adam.zero_grad()
             
+            # Đẩy masks_dict vào compute_loss
             loss = self.compute_loss(
                 points_tensor, reluctivity_tensor, 
-                current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
+                current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor, masks_dict
             )
             
             if torch.isnan(loss) or loss.item() > 1.5 * best_loss:
@@ -69,14 +73,16 @@ class TrainingManager:
                 current_lr = self.optimizer_adam.param_groups[0]['lr']
                 print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {current_lr:.3e}")
 
-    def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+    # Bổ sung masks_dict vào tham số
+    def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor, masks_dict):
         self.model.train()
         for epoch in range(epochs):
             def closure():
                 self.optimizer_lbfgs.zero_grad()
+                # Đẩy masks_dict vào compute_loss
                 loss = self.compute_loss(
                     points_tensor, reluctivity_tensor, 
-                    current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
+                    current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor, masks_dict
                 )
                 loss.backward(retain_graph=True)
                 return loss

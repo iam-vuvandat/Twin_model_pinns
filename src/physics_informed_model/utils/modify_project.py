@@ -1,109 +1,120 @@
 import os
 
-def execute_step_3():
+def execute_step_4():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     project_root_directory = os.path.abspath(os.path.join(base_directory, '..'))
     
-    target_file_path = os.path.join(project_root_directory, 'training_manager.py')
+    target_file_path = os.path.join(project_root_directory, 'electro_magnetic_pinn.py')
     
     new_code = """import torch
-import torch.optim as optim
+import torch.nn as nn
+from pinn_architecture import PINNArchitecture
+from training_manager import TrainingManager
+from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
 
-class TrainingManager:
-    def __init__(self, model, pde_evaluator, lr_adam=1e-3):
-        self.model = model
-        self.pde_evaluator = pde_evaluator
+class ElectroMagneticPINN:
+    # Mở rộng __init__ để hỗ trợ tham số Fourier
+    def __init__(self, geometry_engine_instance, collocation_sampler_instance, hidden_layers=4, hidden_neurons=64, activation_function=nn.SiLU(), use_fourier=True, fourier_features=64, fourier_scale=1.0):
+        self.geometry_engine_instance = geometry_engine_instance
+        self.collocation_sampler_instance = collocation_sampler_instance
         
-        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
+        self.L0 = self.collocation_sampler_instance.x_maximum
+        self.H0 = 800000.0
+        self.nu0 = self.geometry_engine_instance.vacuum_reluctivity
+        self.A0 = (self.H0 * self.L0) / self.nu0
         
-        self.optimizer_lbfgs = optim.LBFGS(
-            self.model.parameters(),
-            lr=1.0,
-            max_iter=50,
-            max_eval=50,
-            tolerance_grad=1e-7,
-            tolerance_change=1e-9,
-            history_size=100,
-            line_search_fn="strong_wolfe"
+        # Khởi tạo kiến trúc 4 nhánh với Fourier
+        self.pinn_architecture_instance = PINNArchitecture(
+            domain_scale=self.L0,
+            hidden_layers=hidden_layers,
+            hidden_neurons=hidden_neurons,
+            activation_function=activation_function,
+            use_fourier=use_fourier,
+            fourier_features=fourier_features,
+            fourier_scale=fourier_scale
+        )
+        self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
+        
+        self.training_manager_instance = TrainingManager(
+            model=self.pinn_architecture_instance,
+            pde_evaluator=self.maxwell_pde_loss_instance
         )
 
-    # Bổ sung masks_dict vào tham số
-    def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor, masks_dict):
-        # Truyền masks_dict vào mạng nơ-ron để gộp nghiệm từ 4 nhánh chuyên gia
-        A_z_star = self.model(points_tensor, masks_dict)
-        
-        residual_star = self.pde_evaluator.compute_residual(
-            xy=points_tensor,
-            A_z_star=A_z_star,
-            nu=reluctivity_tensor,
-            J_z=current_density_z_tensor,
-            H_cx=coercive_field_x_tensor,
-            H_cy=coercive_field_y_tensor
+    def execute_training_process(self, number_of_uniform_points, number_of_interface_points, distance_threshold, epochs_adam, epochs_lbfgs):
+        points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
+            geometry_object=self.geometry_engine_instance,
+            number_of_uniform_points=number_of_uniform_points,
+            number_of_interface_points=number_of_interface_points,
+            distance_threshold=distance_threshold
         )
         
-        loss_pde = torch.mean(residual_star**2)
-        return loss_pde
-
-    # Bổ sung masks_dict vào tham số
-    def train_adam(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor, masks_dict):
-        self.model.train()
-        best_loss = float('inf')
-        best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
+        physical_properties_dictionary = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
         
-        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
+        # Trích xuất masks_dict từ từ điển vật lý
+        masks_dict = physical_properties_dictionary.get("masks_dict", None)
         
-        for epoch in range(epochs):
-            self.optimizer_adam.zero_grad()
-            
-            # Đẩy masks_dict vào compute_loss
-            loss = self.compute_loss(
-                points_tensor, reluctivity_tensor, 
-                current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor, masks_dict
-            )
-            
-            if torch.isnan(loss) or loss.item() > 1.5 * best_loss:
-                self.model.load_state_dict(best_model_state)
-                for param_group in self.optimizer_adam.param_groups:
-                    param_group['lr'] *= 0.8
-                continue
-                
-            loss.backward(retain_graph=True)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-            self.optimizer_adam.step()
-            scheduler_adam.step()
-            
-            current_loss_value = loss.item()
-            if current_loss_value < best_loss:
-                best_loss = current_loss_value
-                best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
-            
-            if (epoch + 1) % 100 == 0:
-                current_lr = self.optimizer_adam.param_groups[0]['lr']
-                print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {current_lr:.3e}")
+        print(f"--- Standard Adam Training ({epochs_adam} Epochs) ---")
+        self.training_manager_instance.train_adam(
+            epochs=epochs_adam,
+            points_tensor=points_tensor,
+            reluctivity_tensor=physical_properties_dictionary["reluctivity"],
+            current_density_z_tensor=physical_properties_dictionary["current_density_z"],
+            coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
+            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"],
+            masks_dict=masks_dict  # Bổ sung truyền mask
+        )
+        
+        print(f"--- L-BFGS Refinement ({epochs_lbfgs} Epochs) ---")
+        self.training_manager_instance.train_lbfgs(
+            epochs=epochs_lbfgs, 
+            points_tensor=points_tensor, 
+            reluctivity_tensor=physical_properties_dictionary["reluctivity"], 
+            current_density_z_tensor=physical_properties_dictionary["current_density_z"], 
+            coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"], 
+            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"],
+            masks_dict=masks_dict  # Bổ sung truyền mask
+        )
 
-    # Bổ sung masks_dict vào tham số
-    def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor, masks_dict):
-        self.model.train()
-        for epoch in range(epochs):
-            def closure():
-                self.optimizer_lbfgs.zero_grad()
-                # Đẩy masks_dict vào compute_loss
-                loss = self.compute_loss(
-                    points_tensor, reluctivity_tensor, 
-                    current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor, masks_dict
-                )
-                loss.backward(retain_graph=True)
-                return loss
+    def predict_magnetic_vector_potential(self, points_tensor):
+        self.pinn_architecture_instance.eval()
+        with torch.no_grad():
+            # Phải tính mask trước khi dự đoán
+            physical_props = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
+            masks_dict = physical_props.get("masks_dict", None)
+            A_z_star = self.pinn_architecture_instance(points_tensor, masks_dict)
+        return A_z_star * self.A0
+
+    def evaluate_fields(self, points_tensor):
+        self.pinn_architecture_instance.eval()
+        points_tensor.requires_grad_(True)
+        
+        # Phải tính mask trước khi tính các trường
+        with torch.no_grad():
+            physical_props = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
+            masks_dict = physical_props.get("masks_dict", None)
             
-            loss_val = self.optimizer_lbfgs.step(closure)
-            print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
+        A_z_star = self.pinn_architecture_instance(points_tensor, masks_dict)
+        A_z_phys = A_z_star * self.A0
+        
+        grad_A = torch.autograd.grad(
+            outputs=A_z_phys,
+            inputs=points_tensor,
+            grad_outputs=torch.ones_like(A_z_phys),
+            create_graph=False,
+            retain_graph=False
+        )[0]
+        
+        B_x = grad_A[:, 1:2]
+        B_y = -grad_A[:, 0:1]
+        
+        return A_z_phys.detach(), B_x.detach(), B_y.detach()
 """
     
     with open(target_file_path, 'w', encoding='utf-8') as f:
         f.write(new_code)
         
-    print(f"BƯỚC 3 HOÀN TẤT: Đã cập nhật thành công tệp:\n{target_file_path}")
-    print("Quản lý huấn luyện (TrainingManager) hiện đã hỗ trợ luân chuyển mặt nạ SDF cho Backpropagation.")
+    print(f"BƯỚC 4 HOÀN TẤT: Đã cập nhật thành công tệp:\n{target_file_path}")
+    print("Quản lý luồng (ElectroMagneticPINN) đã tích hợp thành công masks_dict vào quá trình huấn luyện và đánh giá.")
 
 if __name__ == "__main__":
-    execute_step_3()
+    execute_step_4()
