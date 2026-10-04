@@ -5,7 +5,8 @@ from training_manager import TrainingManager
 from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
 
 class ElectroMagneticPINN:
-    def __init__(self, geometry_engine_instance, collocation_sampler_instance, hidden_layers=4, hidden_neurons=50, activation_function=nn.SiLU()):
+    # Mở rộng __init__ để hỗ trợ tham số Fourier
+    def __init__(self, geometry_engine_instance, collocation_sampler_instance, hidden_layers=4, hidden_neurons=64, activation_function=nn.SiLU(), use_fourier=True, fourier_features=64, fourier_scale=1.0):
         self.geometry_engine_instance = geometry_engine_instance
         self.collocation_sampler_instance = collocation_sampler_instance
         
@@ -14,11 +15,15 @@ class ElectroMagneticPINN:
         self.nu0 = self.geometry_engine_instance.vacuum_reluctivity
         self.A0 = (self.H0 * self.L0) / self.nu0
         
+        # Khởi tạo kiến trúc 4 nhánh với Fourier
         self.pinn_architecture_instance = PINNArchitecture(
             domain_scale=self.L0,
             hidden_layers=hidden_layers,
             hidden_neurons=hidden_neurons,
-            activation_function=activation_function
+            activation_function=activation_function,
+            use_fourier=use_fourier,
+            fourier_features=fourier_features,
+            fourier_scale=fourier_scale
         )
         self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
         
@@ -37,6 +42,9 @@ class ElectroMagneticPINN:
         
         physical_properties_dictionary = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
         
+        # Trích xuất masks_dict từ từ điển vật lý
+        masks_dict = physical_properties_dictionary.get("masks_dict", None)
+        
         print(f"--- Standard Adam Training ({epochs_adam} Epochs) ---")
         self.training_manager_instance.train_adam(
             epochs=epochs_adam,
@@ -44,7 +52,8 @@ class ElectroMagneticPINN:
             reluctivity_tensor=physical_properties_dictionary["reluctivity"],
             current_density_z_tensor=physical_properties_dictionary["current_density_z"],
             coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
-            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
+            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"],
+            masks_dict=masks_dict  # Bổ sung truyền mask
         )
         
         print(f"--- L-BFGS Refinement ({epochs_lbfgs} Epochs) ---")
@@ -54,20 +63,29 @@ class ElectroMagneticPINN:
             reluctivity_tensor=physical_properties_dictionary["reluctivity"], 
             current_density_z_tensor=physical_properties_dictionary["current_density_z"], 
             coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"], 
-            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
+            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"],
+            masks_dict=masks_dict  # Bổ sung truyền mask
         )
 
     def predict_magnetic_vector_potential(self, points_tensor):
         self.pinn_architecture_instance.eval()
         with torch.no_grad():
-            A_z_star = self.pinn_architecture_instance(points_tensor)
+            # Phải tính mask trước khi dự đoán
+            physical_props = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
+            masks_dict = physical_props.get("masks_dict", None)
+            A_z_star = self.pinn_architecture_instance(points_tensor, masks_dict)
         return A_z_star * self.A0
 
     def evaluate_fields(self, points_tensor):
         self.pinn_architecture_instance.eval()
         points_tensor.requires_grad_(True)
         
-        A_z_star = self.pinn_architecture_instance(points_tensor)
+        # Phải tính mask trước khi tính các trường
+        with torch.no_grad():
+            physical_props = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
+            masks_dict = physical_props.get("masks_dict", None)
+            
+        A_z_star = self.pinn_architecture_instance(points_tensor, masks_dict)
         A_z_phys = A_z_star * self.A0
         
         grad_A = torch.autograd.grad(
