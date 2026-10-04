@@ -2,22 +2,25 @@ import torch
 import torch.optim as optim
 
 class TrainingManager:
-    # 1. THÊM target_loss VÀO HÀM KHỞI TẠO
-    def __init__(self, model, pde_evaluator, lr_adam=1e-3, target_loss=1e-3):
+    def __init__(self, model, pde_evaluator, lr_adam=1e-3, lbfgs_lr=0.8, lbfgs_max_iter=1000, lbfgs_max_eval=1250):
         self.model = model
         self.pde_evaluator = pde_evaluator
-        self.target_loss = target_loss
+        self.base_lr_adam = lr_adam
         
-        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
+        self.lbfgs_lr = lbfgs_lr
+        self.lbfgs_max_iter = lbfgs_max_iter
+        self.lbfgs_max_eval = lbfgs_max_eval
+        
+        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=self.base_lr_adam)
         
         self.optimizer_lbfgs = optim.LBFGS(
             self.model.parameters(),
-            lr=1.0,
-            max_iter=50,
-            max_eval=50,
-            tolerance_grad=1e-7,
-            tolerance_change=1e-9,
-            history_size=100,
+            lr=self.lbfgs_lr,
+            max_iter=self.lbfgs_max_iter,
+            max_eval=self.lbfgs_max_eval,
+            tolerance_grad=1e-8,
+            tolerance_change=1e-10,
+            history_size=50,
             line_search_fn="strong_wolfe"
         )
 
@@ -41,10 +44,14 @@ class TrainingManager:
         best_loss = float('inf')
         best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
         
+        for param_group in self.optimizer_adam.param_groups:
+            param_group['initial_lr'] = self.base_lr_adam
+            param_group['lr'] = self.base_lr_adam
+            
         scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
         
         for epoch in range(epochs):
-            self.optimizer_adam.zero_grad()
+            self.optimizer_adam.zero_grad(set_to_none=True)
             
             loss = self.compute_loss(
                 points_tensor, reluctivity_tensor, 
@@ -63,12 +70,6 @@ class TrainingManager:
             scheduler_adam.step()
             
             current_loss_value = loss.item()
-            
-            # 2. SỬ DỤNG THUỘC TÍNH CỦA LỚP ĐỂ KIỂM TRA
-            if self.target_loss > 0 and current_loss_value < self.target_loss:
-                print(f"Adam Epoch {epoch + 1}: Đạt ngưỡng loss mục tiêu < {self.target_loss} ({current_loss_value:.6e}). KẾT THÚC ADAM SỚM!")
-                break
-            
             if current_loss_value < best_loss:
                 best_loss = current_loss_value
                 best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
@@ -79,20 +80,18 @@ class TrainingManager:
 
     def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         self.model.train()
-        for epoch in range(epochs):
-            def closure():
-                self.optimizer_lbfgs.zero_grad()
-                loss = self.compute_loss(
-                    points_tensor, reluctivity_tensor, 
-                    current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
-                )
-                loss.backward(retain_graph=True)
-                return loss
+        lbfgs_counter = [0]
+        
+        def closure():
+            self.optimizer_lbfgs.zero_grad(set_to_none=True)
+            loss = self.compute_loss(
+                points_tensor, reluctivity_tensor, 
+                current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
+            )
+            loss.backward(retain_graph=True)
+            lbfgs_counter[0] += 1
+            if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
+                print(f"L-BFGS Step {lbfgs_counter[0]}: Loss = {loss.item():.6e}")
+            return loss
             
-            loss_val = self.optimizer_lbfgs.step(closure)
-            print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
-            
-            # 3. SỬ DỤNG THUỘC TÍNH CỦA LỚP ĐỂ KIỂM TRA
-            if self.target_loss > 0 and loss_val.item() < self.target_loss:
-                print(f"L-BFGS Epoch {epoch + 1}: Đạt ngưỡng loss mục tiêu < {self.target_loss} ({loss_val.item():.6e}). KẾT THÚC L-BFGS SỚM!")
-                break
+        self.optimizer_lbfgs.step(closure)
