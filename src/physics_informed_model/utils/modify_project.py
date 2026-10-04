@@ -1,82 +1,115 @@
 import os
 
-def execute_step_1():
-    # Xác định đường dẫn thư mục gốc
+def execute_refactor_target_loss():
     base_directory = os.path.dirname(os.path.abspath(__file__))
     project_root_directory = os.path.abspath(os.path.join(base_directory, '..'))
     
-    # Đường dẫn tới tệp cần sửa ở Bước 1
-    target_file_path = os.path.join(
-        project_root_directory, 
-        'geometry_engine', 
-        'global_physical_properties_evaluation.py'
-    )
+    target_file_path = os.path.join(project_root_directory, 'training_manager.py')
     
-    # Nội dung mới của tệp global_physical_properties_evaluation.py
     new_code = """import torch
+import torch.optim as optim
 
-def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_reluctivity, steepness=5000.0):
-    number_of_points = points_tensor.shape[0]
-    computation_device = points_tensor.device
-    
-    global_reluctivity_tensor = torch.full((number_of_points, 1), vacuum_reluctivity, dtype=torch.float32, device=computation_device)
-    global_coercive_field_x_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-    global_coercive_field_y_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-    global_current_density_z_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-    global_material_classification_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
+class TrainingManager:
+    # 1. THÊM target_loss VÀO HÀM KHỞI TẠO
+    def __init__(self, model, pde_evaluator, lr_adam=1e-3, target_loss=1e-3):
+        self.model = model
+        self.pde_evaluator = pde_evaluator
+        self.target_loss = target_loss
+        
+        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=lr_adam)
+        
+        self.optimizer_lbfgs = optim.LBFGS(
+            self.model.parameters(),
+            lr=1.0,
+            max_iter=50,
+            max_eval=50,
+            tolerance_grad=1e-7,
+            tolerance_change=1e-9,
+            history_size=100,
+            line_search_fn="strong_wolfe"
+        )
 
-    material_index_counter = 1.0
-    
-    # BƯỚC 1: Khởi tạo từ điển lưu trữ mặt nạ (masks_dict)
-    masks_dict = {}
+    def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+        A_z_star = self.model(points_tensor)
+        
+        residual_star = self.pde_evaluator.compute_residual(
+            xy=points_tensor,
+            A_z_star=A_z_star,
+            nu=reluctivity_tensor,
+            J_z=current_density_z_tensor,
+            H_cx=coercive_field_x_tensor,
+            H_cy=coercive_field_y_tensor
+        )
+        
+        loss_pde = torch.mean(residual_star**2)
+        return loss_pde
 
-    for segment_object in segments_list:
-        signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
+    def train_adam(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+        self.model.train()
+        best_loss = float('inf')
+        best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
         
-        mask_smooth = torch.sigmoid(-steepness * signed_distance_field).view(-1, 1)
+        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
         
-        # Lưu mặt nạ vào từ điển theo tên vật liệu
-        # Nếu có nhiều vật thể cùng loại (VD: 2 khối nam châm), ta cộng dồn mặt nạ của chúng lại
-        mat_name = segment_object.material_name
-        if mat_name in masks_dict:
-            masks_dict[mat_name] = masks_dict[mat_name] + mask_smooth
-        else:
-            masks_dict[mat_name] = mask_smooth
-        
-        seg_reluctivity = segment_object.evaluate_reluctivity(points_tensor)
-        hx_tensor, hy_tensor = segment_object.evaluate_magnetization_vector(points_tensor)
-        seg_jz = segment_object.evaluate_current_density(points_tensor)
-        
-        global_reluctivity_tensor = global_reluctivity_tensor + mask_smooth * (seg_reluctivity - vacuum_reluctivity)
-        global_coercive_field_x_tensor = global_coercive_field_x_tensor + mask_smooth * hx_tensor
-        global_coercive_field_y_tensor = global_coercive_field_y_tensor + mask_smooth * hy_tensor
-        global_current_density_z_tensor = global_current_density_z_tensor + mask_smooth * seg_jz
-        
-        global_material_classification_tensor = global_material_classification_tensor + mask_smooth * material_index_counter
-        
-        material_index_counter += 1.0
+        for epoch in range(epochs):
+            self.optimizer_adam.zero_grad()
+            
+            loss = self.compute_loss(
+                points_tensor, reluctivity_tensor, 
+                current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
+            )
+            
+            if torch.isnan(loss) or loss.item() > 1.5 * best_loss:
+                self.model.load_state_dict(best_model_state)
+                for param_group in self.optimizer_adam.param_groups:
+                    param_group['lr'] *= 0.8
+                continue
+                
+            loss.backward(retain_graph=True)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            self.optimizer_adam.step()
+            scheduler_adam.step()
+            
+            current_loss_value = loss.item()
+            
+            # 2. SỬ DỤNG THUỘC TÍNH CỦA LỚP ĐỂ KIỂM TRA
+            if self.target_loss > 0 and current_loss_value < self.target_loss:
+                print(f"Adam Epoch {epoch + 1}: Đạt ngưỡng loss mục tiêu < {self.target_loss} ({current_loss_value:.6e}). KẾT THÚC ADAM SỚM!")
+                break
+            
+            if current_loss_value < best_loss:
+                best_loss = current_loss_value
+                best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
+            
+            if (epoch + 1) % 100 == 0:
+                current_lr = self.optimizer_adam.param_groups[0]['lr']
+                print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {current_lr:.3e}")
 
-    # Kẹp (clamp) các giá trị mặt nạ trong khoảng [0, 1] để tránh vượt ngưỡng tại các vùng giao nhau
-    for key in masks_dict:
-        masks_dict[key] = torch.clamp(masks_dict[key], min=0.0, max=1.0)
-
-    # Trả về thêm masks_dict để phân luồng cho mạng nơ-ron chuyên gia
-    return {
-        "reluctivity": global_reluctivity_tensor,
-        "coercive_field_x": global_coercive_field_x_tensor,
-        "coercive_field_y": global_coercive_field_y_tensor,
-        "current_density_z": global_current_density_z_tensor,
-        "material_classification": global_material_classification_tensor,
-        "masks_dict": masks_dict
-    }
+    def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+        self.model.train()
+        for epoch in range(epochs):
+            def closure():
+                self.optimizer_lbfgs.zero_grad()
+                loss = self.compute_loss(
+                    points_tensor, reluctivity_tensor, 
+                    current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
+                )
+                loss.backward(retain_graph=True)
+                return loss
+            
+            loss_val = self.optimizer_lbfgs.step(closure)
+            print(f"L-BFGS Epoch {epoch + 1}: Loss = {loss_val.item():.6e}")
+            
+            # 3. SỬ DỤNG THUỘC TÍNH CỦA LỚP ĐỂ KIỂM TRA
+            if self.target_loss > 0 and loss_val.item() < self.target_loss:
+                print(f"L-BFGS Epoch {epoch + 1}: Đạt ngưỡng loss mục tiêu < {self.target_loss} ({loss_val.item():.6e}). KẾT THÚC L-BFGS SỚM!")
+                break
 """
     
-    # Ghi đè file
     with open(target_file_path, 'w', encoding='utf-8') as f:
         f.write(new_code)
         
-    print(f"BƯỚC 1 HOÀN TẤT: Đã cập nhật thành công tệp:\n{target_file_path}")
-    print("Hàm evaluate_global_physical_properties hiện đã trích xuất và trả về masks_dict.")
+    print(f"Thành công: Đã tái cấu trúc target_loss thành thuộc tính của TrainingManager trong:\n{target_file_path}")
 
 if __name__ == "__main__":
-    execute_step_1()
+    execute_refactor_target_loss()
