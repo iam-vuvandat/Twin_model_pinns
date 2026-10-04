@@ -1,5 +1,5 @@
 """
-version 2.1.0 - Expanded Bounding Box (-0.08 to 0.08)
+version 2.2.0 - Pure MoE Architecture (Fourier Disabled)
 """
 import os
 import sys
@@ -55,7 +55,7 @@ def main():
     )
     geometry_instance.add_segment(magnet_u_shape)
     
-    # 2. KHỞI TẠO BỘ LẤY MẪU (MỞ RỘNG KHÔNG GIAN)
+    # 2. KHỞI TẠO BỘ LẤY MẪU
     collocation_sampler_instance = CollocationSampler(
         x_boundaries_tuple=(-0.08, 0.08),
         y_boundaries_tuple=(-0.08, 0.08)
@@ -68,29 +68,27 @@ def main():
         resolution=150
     )
 
-    # 3. CẤU HÌNH MẠNG NƠ-RON HỖN HỢP CHUYÊN GIA
+    # 3. CẤU HÌNH MẠNG NƠ-RON HỖN HỢP CHUYÊN GIA (TẮT FOURIER)
     model = ElectroMagneticPINN(
         geometry_engine_instance=geometry_instance,
         collocation_sampler_instance=collocation_sampler_instance,
         hidden_layers=5,               
         hidden_neurons=64,             
         activation_function=nn.Tanh(),
-        use_fourier=True,              
-        fourier_features=64,           
-        fourier_scale=1.5              
+        use_fourier=False   # <--- TẮT ÁNH XẠ FOURIER TẠI ĐÂY
     )
     
     # 4. TIẾN HÀNH HUẤN LUYỆN
-    print("Bắt đầu huấn luyện mạng PINN phân nhánh...")
+    print("Bắt đầu huấn luyện mạng PINN phân nhánh (Không dùng Fourier)...")
     model.execute_training_process(
-        number_of_uniform_points=3500,   # Tăng nhẹ số điểm lấy mẫu vì không gian lớn hơn
+        number_of_uniform_points=3500,
         number_of_interface_points=1200,
         distance_threshold=0.005,
-        epochs_adam=1200,                
+        epochs_adam=2000,    # Tăng Adam một chút để bù đắp việc thiếu Fourier
         epochs_lbfgs=200                 
     )
     
-    # 5. ĐÁNH GIÁ VÀ TRỰC QUAN HÓA (CẬP NHẬT TỌA ĐỘ LƯỚI)
+    # 5. ĐÁNH GIÁ VÀ TRỰC QUAN HÓA
     print("Đang tạo biểu đồ trực quan hóa kết quả trường điện từ...")
     resolution = 120
     x_coords = np.linspace(-0.08, 0.08, resolution)
